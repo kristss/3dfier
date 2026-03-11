@@ -61,6 +61,7 @@ _site
 /buildxcode
 /src_modified
 /docs_modified
+/example_data_large
 
 # CLion files
 .idea
