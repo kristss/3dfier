@@ -1282,13 +1282,13 @@ bool TopoFeature::within_range(const Point2& p, double radius) {
   if (sample) {
     start = PerfClock::now();
   }
-  if (point_in_polygon(p)) {
+  if (within_vertex_distance(p, radius)) {
     if (sample) {
       g_topofeature_perf.within_range_ms += elapsed_ms(start) * sample_scale();
     }
     return true;
   }
-  bool in_distance = within_vertex_distance(p, radius);
+  bool in_distance = point_in_polygon(p);
   if (sample) {
     g_topofeature_perf.within_range_ms += elapsed_ms(start) * sample_scale();
   }
