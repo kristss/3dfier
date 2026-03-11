@@ -1322,7 +1322,6 @@ bool Map3d::add_las_file(PointFile pointFile) {
  * query rtrees and iterate results to find adjacent features
  */
 void Map3d::collect_adjacent_features(TopoFeature* f) {
-  std::vector<PairIndexed> re;
   Box2 b = f->get_bbox2d();
   Box2 expanded_bbox(
     Point2(bg::get<bg::min_corner, 0>(b) - TOPODIST, bg::get<bg::min_corner, 1>(b) - TOPODIST),
@@ -1334,16 +1333,12 @@ void Map3d::collect_adjacent_features(TopoFeature* f) {
 
   for (auto& candidate : rough_candidates) {
     if (bg::distance(candidate.first, b) < TOPODIST) {
-      re.push_back(candidate);
-    }
-  }
-
-  _perf.adjacency_candidates += re.size();
-  for (auto& each : re) {
-    TopoFeature* fadj = each.second;
-    if (f != fadj && f->adjacent(*(fadj->get_Polygon2()))){
-      f->add_adjacent_feature(fadj);
-      _perf.adjacency_true_hits++;
+      _perf.adjacency_candidates++;
+      TopoFeature* fadj = candidate.second;
+      if (f != fadj && f->adjacent(*(fadj->get_Polygon2()))) {
+        f->add_adjacent_feature(fadj);
+        _perf.adjacency_true_hits++;
+      }
     }
   }
 }
@@ -1358,21 +1353,24 @@ void Map3d::stitch_lifted_features() {
   std::vector<int> ringis, pis;
   for (auto& f : _lsFeatures) {
     if (f->get_class() != BRIDGE) {
-      //-- gather all rings
-      std::vector<Ring2> therings;
       Polygon2* poly = f->get_Polygon2();
-      therings.push_back(poly->outer());
-      for (Ring2& iring : poly->inners())
-        therings.push_back(iring);
+      std::vector<const Ring2*> rings;
+      rings.reserve(poly->inners().size() + 1);
+      rings.push_back(&poly->outer());
+      for (Ring2& iring : poly->inners()) {
+        rings.push_back(&iring);
+      }
+      std::vector<TopoFeature*>* lstouching = f->get_adjacent_features();
+      Building* building = (f->get_class() == BUILDING) ? dynamic_cast<Building*>(f) : nullptr;
 
       int ringi = -1;
-      for (Ring2& ring : therings) {
+      for (const Ring2* ring_ptr : rings) {
         ringi++;
-        //-- 1. store all touching top level (adjacent + incident)
-        std::vector<TopoFeature*>* lstouching = f->get_adjacent_features();
+        const Ring2& ring = *ring_ptr;
         //-- 2. build the node-column for each vertex
         for (int i = 0; i < ring.size(); i++) {
           std::vector< std::tuple<TopoFeature*, int, int> > star;
+          star.reserve(lstouching->size());
           bool toprocess = false;
           for (auto& fadj : *lstouching) {
             ringis.clear();
@@ -1387,10 +1385,10 @@ void Map3d::stitch_lifted_features() {
           if (toprocess == true) {
             this->stitch_one_vertex(f, ringi, i, star);
           }
-          else if (f->get_class() == BUILDING) {
-            Point2 tmp = f->get_point2(ringi, i);
+          else if (building != nullptr) {
+            Point2 tmp = ring[i];
             std::string key_bucket = gen_key_bucket(&tmp);
-            int z = dynamic_cast<Building*>(f)->get_height_base();
+            int z = building->get_height_base();
             _nc_building_walls[key_bucket].push_back(z);
             z = f->get_vertex_elevation(ringi, i);
             _nc_building_walls[key_bucket].push_back(z);
@@ -1734,15 +1732,18 @@ void Map3d::stitch_bridges() {
       //-- 1. store all touching top level (adjacent + incident)
       std::vector<TopoFeature*>* lstouching = f->get_adjacent_features();
 
-      //-- gather all rings
-      std::vector<Ring2> rings;
-      rings.push_back(f->get_Polygon2()->outer());
-      for (Ring2& iring : f->get_Polygon2()->inners())
-        rings.push_back(iring);
+      Polygon2* poly = f->get_Polygon2();
+      std::vector<const Ring2*> rings;
+      rings.reserve(poly->inners().size() + 1);
+      rings.push_back(&poly->outer());
+      for (Ring2& iring : poly->inners()) {
+        rings.push_back(&iring);
+      }
 
       int ringi = -1;
-      for (Ring2& ring : rings) {
+      for (const Ring2* ring_ptr : rings) {
         ringi++;
+        const Ring2& ring = *ring_ptr;
 
         for (int i = 0; i < ring.size(); i++) {
           for (auto& fadj : *lstouching) {
@@ -1754,7 +1755,7 @@ void Map3d::stitch_bridges() {
                 f->set_vertex_elevation(ringi, i, z);
                 if (!(fadj->get_class() == BRIDGE && fadj->get_top_level() == f->get_top_level())) {
                   // Add height to NC
-                  Point2 p = f->get_point2(ringi, i);
+                  Point2 p = ring[i];
                   std::string key_bucket = gen_key_bucket(&p);
                   _nc[key_bucket].push_back(z);
                   _bridge_stitches[key_bucket] = z;
@@ -1774,15 +1775,18 @@ void Map3d::stitch_bridges() {
       //-- 1. store all touching top level (adjacent + incident)
       std::vector<TopoFeature*>* lstouching = f->get_adjacent_features();
 
-      //-- gather all rings
-      std::vector<Ring2> rings;
-      rings.push_back(f->get_Polygon2()->outer());
-      for (Ring2& iring : f->get_Polygon2()->inners())
-        rings.push_back(iring);
+      Polygon2* poly = f->get_Polygon2();
+      std::vector<const Ring2*> rings;
+      rings.reserve(poly->inners().size() + 1);
+      rings.push_back(&poly->outer());
+      for (Ring2& iring : poly->inners()) {
+        rings.push_back(&iring);
+      }
 
       int ringi = -1;
-      for (Ring2& ring : rings) {
+      for (const Ring2* ring_ptr : rings) {
         ringi++;
+        const Ring2& ring = *ring_ptr;
 
         //Search for corners to base stitching on
         //Corners are based on highest level already stitched before
@@ -1856,11 +1860,12 @@ void Map3d::stitch_bridges() {
               int ringi = -1;
               int z_fix;
               bool found_z = false;
-              for (Ring2& ring : rings) {
+              for (const Ring2* ring_cand_ptr : rings) {
                 ringi++;
+                const Ring2& ring_cand = *ring_cand_ptr;
 
-                for (int i = 0; i < ring.size(); i++) {
-                  Point2 p = f->get_point2(ringi, i);
+                for (int i = 0; i < ring_cand.size(); i++) {
+                  Point2 p = ring_cand[i];
                   std::string key_bucket_cand = gen_key_bucket(&p);
                   if (_nc.find(key_bucket_cand) != _nc.end()) {
                     found_z = true;

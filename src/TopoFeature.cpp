@@ -931,6 +931,34 @@ float TopoFeature::get_distance_to_boundaries(const Point2& p) {
  * check if this feature has the supplied point
  * uses squared distance rather then equals for floating point precision errors
  */
+bool TopoFeature::has_point2(const Point2& p) {
+  if (_has_point_entries.empty()) {
+    return false;
+  }
+
+  int gx = get_grid_coord(p.x(), TOPODIST);
+  int gy = get_grid_coord(p.y(), TOPODIST);
+  for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -1; dy <= 1; ++dy) {
+      auto it = _has_point_grid_index.find(make_grid_key(gx + dx, gy + dy));
+      if (it == _has_point_grid_index.end()) {
+        continue;
+      }
+      for (std::size_t idx : it->second) {
+        const HasPointIndexEntry& candidate = _has_point_entries[idx];
+        if (sqr_distance(p, candidate.point) <= SQTOPODIST) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * check if this feature has the supplied point
+ * uses squared distance rather then equals for floating point precision errors
+ */
 bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vector<int>& pis) {
   if (_has_point_entries.empty()) {
     return false;
@@ -939,7 +967,8 @@ bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vec
   int gx = get_grid_coord(p.x(), TOPODIST);
   int gy = get_grid_coord(p.y(), TOPODIST);
   int ring_count = int(_p2->inners().size()) + 1;
-  std::vector<int> min_pi_per_ring(ring_count, -1);
+  _has_point_min_pi_scratch.resize(ring_count, -1);
+  std::fill(_has_point_min_pi_scratch.begin(), _has_point_min_pi_scratch.end(), -1);
 
   for (int dx = -1; dx <= 1; ++dx) {
     for (int dy = -1; dy <= 1; ++dy) {
@@ -950,7 +979,7 @@ bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vec
       for (std::size_t idx : it->second) {
         const HasPointIndexEntry& candidate = _has_point_entries[idx];
         if (sqr_distance(p, candidate.point) <= SQTOPODIST) {
-          int& min_pi = min_pi_per_ring[candidate.ringi];
+          int& min_pi = _has_point_min_pi_scratch[candidate.ringi];
           if (min_pi == -1 || candidate.pi < min_pi) {
             min_pi = candidate.pi;
           }
@@ -961,9 +990,9 @@ bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vec
 
   bool re = false;
   for (int ringi = 0; ringi < ring_count; ++ringi) {
-    if (min_pi_per_ring[ringi] != -1) {
+    if (_has_point_min_pi_scratch[ringi] != -1) {
       ringis.push_back(ringi);
-      pis.push_back(min_pi_per_ring[ringi]);
+      pis.push_back(_has_point_min_pi_scratch[ringi]);
       re = true;
     }
   }
@@ -975,24 +1004,16 @@ bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vec
  * uses squared distance rather then equals for floating point precision errors
  */
 bool TopoFeature::adjacent(Polygon2& poly) {
-  std::vector<Ring2> rings1;
-  rings1.push_back(_p2->outer());
-  for (Ring2& iring : _p2->inners())
-    rings1.push_back(iring);
-
-  std::vector<Ring2> rings2;
-  rings2.push_back(poly.outer());
-  for (Ring2& iring : poly.inners())
-    rings2.push_back(iring);
-
-  for (Ring2& ring1 : rings1) {
-    for (int pi1 = 0; pi1 < ring1.size(); pi1++) {
-      for (Ring2& ring2 : rings2) {
-        for (int pi2 = 0; pi2 < ring2.size(); pi2++) {
-          if (sqr_distance(ring1[pi1], ring2[pi2]) <= SQTOPODIST) {
-            return true;
-          }
-        }
+  const Ring2& outer = poly.outer();
+  for (const Point2& p : outer) {
+    if (has_point2(p)) {
+      return true;
+    }
+  }
+  for (const Ring2& iring : poly.inners()) {
+    for (const Point2& p : iring) {
+      if (has_point2(p)) {
+        return true;
       }
     }
   }

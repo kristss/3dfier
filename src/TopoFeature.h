@@ -72,6 +72,7 @@ public:
   Box2         get_bbox2d();
   std::string  get_layername();
   Point2       get_point2(int ringi, int pi);
+  bool         has_point2(const Point2& p);
   bool         has_point2(const Point2& p, std::vector<int>& ringis, std::vector<int>& pis);
   bool         has_segment(const Point2& a, const Point2& b, int& aringi, int& api, int& bringi, int& bpi);
   bool         adjacent(Polygon2& poly);
@@ -135,6 +136,7 @@ protected:
   std::unordered_map<std::uint64_t, std::vector<std::size_t> > _vertex_grid_index;
   std::vector<HasPointIndexEntry>                         _has_point_entries;
   std::unordered_map<std::uint64_t, std::vector<std::size_t> > _has_point_grid_index;
+  std::vector<int>                                        _has_point_min_pi_scratch;
   std::vector<RingEdgeCacheEntry>                         _outer_edge_cache;
   std::vector<std::vector<RingEdgeCacheEntry> >           _inner_edge_caches;
   std::vector<Box2>                                        _inner_ring_bboxes;
