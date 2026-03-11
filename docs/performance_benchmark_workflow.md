@@ -17,14 +17,14 @@ scripts/benchmark_large_example.sh \
   --runs 5 \
   --warmup 1 \
   --tag telemetry_baseline \
-  --equiv-obj /home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/telemetry_post_merge_reverted_20260311T182031Z/run_1.obj \
+  --equiv-obj /home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/point2key_stage_20260311T184108Z/run_1.obj \
   --equiv-tol 1e-4
 ```
 
 ## Current Baseline
-- Baseline artifacts: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/telemetry_post_merge_reverted_20260311T182031Z`
-- Baseline CSV: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/telemetry_post_merge_reverted_20260311T182031Z/perf.csv`
-- Baseline OBJ for equivalence: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/telemetry_post_merge_reverted_20260311T182031Z/run_1.obj`
+- Baseline artifacts: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/point2key_stage_20260311T184108Z`
+- Baseline CSV: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/point2key_stage_20260311T184108Z/perf.csv`
+- Baseline OBJ for equivalence: `/home/elena/3dfier_doneright/3dfier/example_data_large/output/benchmarks/point2key_stage_20260311T184108Z/run_1.obj`
 
 ## Artifact Policy
 - Raw artifacts (OBJ/CSV/log) stay untracked under `example_data_large/output/benchmarks/`

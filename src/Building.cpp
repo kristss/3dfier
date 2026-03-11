@@ -233,14 +233,14 @@ void Building::construct_building_walls(const NodeColumn& nc) {
         }
       }
 
-      std::unordered_map<std::string, std::vector<int>>::const_iterator ncit;
+      NodeColumn::const_iterator ncit;
       std::vector<int> anc, bnc;
       //-- check if there's a nc for either
-      ncit = nc.find(gen_key_bucket(&a));
+      ncit = nc.find(make_point2_key(a));
       if (ncit != nc.end()) {
         anc = ncit->second;
       }
-      ncit = nc.find(gen_key_bucket(&b));
+      ncit = nc.find(make_point2_key(b));
       if (ncit != nc.end()) {
         bnc = ncit->second;
       }

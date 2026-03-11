@@ -41,6 +41,7 @@
 
 #include <vector>
 #include <unordered_set>
+#include <cstdio>
 #include <boost/heap/fibonacci_heap.hpp>
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel			K;
@@ -222,21 +223,21 @@ bool getCDT(Polygon2* pgn,
 }
 
 std::string gen_key_bucket(const Point2* p) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>();
-  return ss.str();
+  char key[96];
+  std::snprintf(key, sizeof(key), "%.3f %.3f", p->get<0>(), p->get<1>());
+  return std::string(key);
 }
 
 std::string gen_key_bucket(const Point3* p) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>() << " " << std::setprecision(2) << p->get<2>();
-  return ss.str();
+  char key[128];
+  std::snprintf(key, sizeof(key), "%.3f %.3f %.2f", p->get<0>(), p->get<1>(), p->get<2>());
+  return std::string(key);
 }
 
 std::string gen_key_bucket(const Point3* p, float z) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>() << " " << std::setprecision(2) << z;
-  return ss.str();
+  char key[128];
+  std::snprintf(key, sizeof(key), "%.3f %.3f %.2f", p->get<0>(), p->get<1>(), z);
+  return std::string(key);
 }
 
 double distance(const Point2 &p1, const Point2 &p2) {

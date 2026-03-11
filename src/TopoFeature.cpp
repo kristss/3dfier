@@ -677,7 +677,7 @@ void TopoFeature::construct_vertical_walls(const NodeColumn& nc) {
 
   //-- process each vertex of the polygon separately
   std::vector<int> anc, bnc;
-  std::unordered_map<std::string, std::vector<int>>::const_iterator ncit;
+  NodeColumn::const_iterator ncit;
   Point2 a, b;
   TopoFeature* fadj;
   int ringi = -1;
@@ -719,11 +719,11 @@ void TopoFeature::construct_vertical_walls(const NodeColumn& nc) {
       int fadj_bz = fadj->get_vertex_elevation(adj_b_ringi, adj_b_pi);
 
       //-- check if there's a nc for either
-      ncit = nc.find(gen_key_bucket(&a));
+      ncit = nc.find(make_point2_key(a));
       if (ncit != nc.end()) {
         anc = ncit->second;
       }
-      ncit = nc.find(gen_key_bucket(&b));
+      ncit = nc.find(make_point2_key(b));
       if (ncit != nc.end()) {
         bnc = ncit->second;
       }
@@ -1032,11 +1032,7 @@ Point2 TopoFeature::get_point2(int ringi, int pi) {
  * return first vertex of ring when last vertex is supplied
  */
 Point2 TopoFeature::get_next_point2_in_ring(int ringi, int i, int& pi) {
-  Ring2 ring;
-  if (ringi == 0)
-    ring = _p2->outer();
-  else
-    ring = _p2->inners()[ringi - 1];
+  const Ring2& ring = (ringi == 0) ? _p2->outer() : _p2->inners()[ringi - 1];
 
   if (i == (ring.size() - 1)) {
     pi = 0;

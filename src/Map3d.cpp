@@ -1386,8 +1386,7 @@ void Map3d::stitch_lifted_features() {
             this->stitch_one_vertex(f, ringi, i, star);
           }
           else if (building != nullptr) {
-            Point2 tmp = ring[i];
-            std::string key_bucket = gen_key_bucket(&tmp);
+            Point2Key key_bucket = make_point2_key(ring[i]);
             int z = building->get_height_base();
             _nc_building_walls[key_bucket].push_back(z);
             z = f->get_vertex_elevation(ringi, i);
@@ -1406,7 +1405,7 @@ void Map3d::stitch_lifted_features() {
 void Map3d::stitch_one_vertex(TopoFeature* f, int ringi, int pi, std::vector< std::tuple<TopoFeature*, int, int> >& star) {
   //-- get p and key_bucket once and check if nc location is empty
   Point2 p = f->get_point2(ringi, pi);
-  std::string key_bucket = gen_key_bucket(&p);
+  Point2Key key_bucket = make_point2_key(p);
   if (_nc.find(key_bucket) == _nc.end() && _nc_building_walls.find(key_bucket) == _nc_building_walls.end()) {
     //-- degree of vertex == 2
     if (star.size() == 1) {
@@ -1608,7 +1607,7 @@ void Map3d::stitch_one_vertex(TopoFeature* f, int ringi, int pi, std::vector< st
  */
 void Map3d::stitch_jumpedge(TopoFeature* f1, int ringi1, int pi1, TopoFeature* f2, int ringi2, int pi2) {
   Point2 p = f1->get_point2(ringi1, pi1);
-  std::string key_bucket = gen_key_bucket(&p);
+  Point2Key key_bucket = make_point2_key(p);
   int f1z = f1->get_vertex_elevation(ringi1, pi1);
   int f2z = f2->get_vertex_elevation(ringi2, pi2);
 
@@ -1709,7 +1708,7 @@ void Map3d::stitch_average(TopoFeature* f1, int ringi1, int pi1, TopoFeature* f2
   f1->set_vertex_elevation(ringi1, pi1, avgz);
   f2->set_vertex_elevation(ringi2, pi2, avgz);
   Point2 p = f1->get_point2(ringi1, pi1);
-  _nc[gen_key_bucket(&p)].push_back(avgz);
+  _nc[make_point2_key(p)].push_back(avgz);
 }
 
 /**
@@ -1755,8 +1754,7 @@ void Map3d::stitch_bridges() {
                 f->set_vertex_elevation(ringi, i, z);
                 if (!(fadj->get_class() == BRIDGE && fadj->get_top_level() == f->get_top_level())) {
                   // Add height to NC
-                  Point2 p = ring[i];
-                  std::string key_bucket = gen_key_bucket(&p);
+                  Point2Key key_bucket = make_point2_key(ring[i]);
                   _nc[key_bucket].push_back(z);
                   _bridge_stitches[key_bucket] = z;
                   z_cnt ++;
@@ -1795,7 +1793,7 @@ void Map3d::stitch_bridges() {
         for (int i = 0; i < ring.size(); i++) {
           // find begin of stitched stretch
           Point2 p = f->get_point2(ringi, i);
-          std::string key_bucket = gen_key_bucket(&p);
+          Point2Key key_bucket = make_point2_key(p);
 
           bool setheight = false;
           int previ = i - 1;
@@ -1803,7 +1801,7 @@ void Map3d::stitch_bridges() {
             previ = ring.size() - 1;
           }
           Point2 prevp = f->get_point2(ringi, previ);
-          std::string prev_key_bucket = gen_key_bucket(&prevp);
+          Point2Key prev_key_bucket = make_point2_key(prevp);
           if (_bridge_stitches.find(key_bucket) != _bridge_stitches.end() &&
             _bridge_stitches.find(prev_key_bucket) == _bridge_stitches.end()) {
             // add start of stitched stretch to corners
@@ -1817,7 +1815,7 @@ void Map3d::stitch_bridges() {
               nexti = 0;
             }
             Point2 nextp = f->get_point2(ringi, nexti);
-            std::string next_key_bucket = gen_key_bucket(&nextp);
+            Point2Key next_key_bucket = make_point2_key(nextp);
             if (_bridge_stitches.find(key_bucket) != _bridge_stitches.end() &&
               _bridge_stitches.find(next_key_bucket) == _bridge_stitches.end()) {
               // add end of stitched stretch to corners
@@ -1852,7 +1850,7 @@ void Map3d::stitch_bridges() {
           if (setheight) {
             // set corner height to lowest value in the NC
             if (_nc.find(key_bucket) == _nc.end()) {
-              std::clog << "WARNING: NodeColumn not filled at " << key_bucket << std::endl;
+              std::clog << "WARNING: NodeColumn not filled at " << p.x() << " " << p.y() << std::endl;
               
               
               // This is a crude fix for a potential crash when there is a lack of elevation points locally
@@ -1865,8 +1863,7 @@ void Map3d::stitch_bridges() {
                 const Ring2& ring_cand = *ring_cand_ptr;
 
                 for (int i = 0; i < ring_cand.size(); i++) {
-                  Point2 p = ring_cand[i];
-                  std::string key_bucket_cand = gen_key_bucket(&p);
+                  Point2Key key_bucket_cand = make_point2_key(ring_cand[i]);
                   if (_nc.find(key_bucket_cand) != _nc.end()) {
                     found_z = true;
                     z_fix = _nc[key_bucket_cand].front();
@@ -1913,7 +1910,7 @@ void Map3d::stitch_bridges() {
 
           for (int pi : vertices) {
             Point2 p = f->get_point2(ringi, pi);
-            std::string key_bucket = gen_key_bucket(&p);
+            Point2Key key_bucket = make_point2_key(p);
             int stitchz = 0;
             if (_nc.find(key_bucket) != _nc.end()) {
               stitchz = _nc[key_bucket].front();

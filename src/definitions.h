@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 #include <unordered_map>
 
@@ -25,7 +26,31 @@ typedef bg::model::ring<Point2, true, false> Ring2; //-- cw, first!=last
 typedef bg::model::box<Point2> Box2;
 typedef bg::model::point<double, 3, bg::cs::cartesian> Point3;
 
-typedef std::unordered_map< std::string, std::vector<int> > NodeColumn;
+struct Point2Key {
+  std::int64_t x;
+  std::int64_t y;
+
+  bool operator==(const Point2Key& other) const {
+    return x == other.x && y == other.y;
+  }
+};
+
+struct Point2KeyHash {
+  std::size_t operator()(const Point2Key& key) const {
+    std::size_t h1 = std::hash<std::int64_t>{}(key.x);
+    std::size_t h2 = std::hash<std::int64_t>{}(key.y);
+    return h1 ^ (h2 << 1);
+  }
+};
+
+inline Point2Key make_point2_key(const Point2& p) {
+  return Point2Key{
+    static_cast<std::int64_t>(std::llround(p.x() * 1000.0)),
+    static_cast<std::int64_t>(std::llround(p.y() * 1000.0))
+  };
+}
+
+typedef std::unordered_map< Point2Key, std::vector<int>, Point2KeyHash > NodeColumn;
 typedef std::unordered_map< std::string, std::pair<OGRFieldType, std::string> > AttributeMap;
 
 const double TOPODIST = 0.001;

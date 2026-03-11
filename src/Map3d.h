@@ -208,7 +208,7 @@ private:
 
   NodeColumn                                          _nc;
   NodeColumn                                          _nc_building_walls;
-  std::unordered_map<std::string, int>                _bridge_stitches;
+  std::unordered_map<Point2Key, int, Point2KeyHash>   _bridge_stitches;
   std::vector<TopoFeature*>                           _lsFeatures;
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree;
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree_buildings;
