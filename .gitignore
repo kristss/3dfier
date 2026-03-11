@@ -59,7 +59,10 @@ _site
 /ressources/convert-to-simulation/bin/
 /example_data/o.json
 /buildxcode
+/src_modified
+/docs_modified
 
 # CLion files
 .idea
 cmake-build-debug-docker
+
