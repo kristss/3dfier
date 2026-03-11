@@ -47,6 +47,38 @@
 
 typedef std::pair<Box2, TopoFeature*> PairIndexed;
 
+struct PerfStats {
+  double polygons_read_ms = 0.0;
+  double rtree_build_ms = 0.0;
+  double points_ingest_ms = 0.0;
+  double points_ingest_rtree_query_ms = 0.0;
+  double points_ingest_candidate_filter_ms = 0.0;
+  double points_ingest_feature_insert_ms = 0.0;
+  double point_in_polygon_ms = 0.0;
+  double within_range_ms = 0.0;
+  double assign_elevation_to_vertex_ms = 0.0;
+  double distance_to_boundaries_ms = 0.0;
+  double lift_ms = 0.0;
+  double adjacent_collection_ms = 0.0;
+  double stitching_ms = 0.0;
+  double bowties_ms = 0.0;
+  double vertical_walls_ms = 0.0;
+  double cdt_ms = 0.0;
+  double output_write_ms = 0.0;
+  double total_runtime_ms = 0.0;
+
+  std::uint64_t polygon_count = 0;
+  std::uint64_t las_files_count = 0;
+  std::uint64_t las_points_total = 0;
+  std::uint64_t points_after_thinning = 0;
+  std::uint64_t points_after_omit = 0;
+  std::uint64_t points_after_bounds = 0;
+  std::uint64_t point_feature_candidates = 0;
+  std::uint64_t accepted_inserts = 0;
+  std::uint64_t adjacency_candidates = 0;
+  std::uint64_t adjacency_true_hits = 0;
+};
+
 class Map3d {
 public:
   Map3d();
@@ -115,6 +147,9 @@ public:
   void add_allowed_las_class_within(AllowedLASTopo c, int i);
   bool save_building_variables();
   int interpolate_height(TopoFeature* f, const Point2 &p, int prevringi, int prevpi, int nextringi, int nextpi);
+  const PerfStats& get_perf_stats() const;
+  void add_output_write_ms(double duration_ms);
+  void set_total_runtime_ms(double duration_ms);
 
 private:
   float       _building_heightref_roof;
@@ -163,6 +198,7 @@ private:
   std::vector<TopoFeature*>                           _lsFeatures;
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree;
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree_buildings;
+  PerfStats                                           _perf;
 
 #if GDAL_VERSION_MAJOR < 2
   bool extract_and_add_polygon(OGRDataSource* dataSource, PolygonFile* file);

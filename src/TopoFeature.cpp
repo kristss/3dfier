@@ -36,10 +36,18 @@
 #include "TopoFeature.h"
 #include <cstddef>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace {
 constexpr double MIN_VERTEX_GRID_SIZE = 1e-3;
+TopoFeaturePerfCounters g_topofeature_perf;
+using PerfClock = std::chrono::steady_clock;
+constexpr std::uint32_t PERF_SAMPLE_MASK = 0x7; // sample 1/8 calls in hot paths
+std::uint64_t g_point_in_polygon_calls = 0;
+std::uint64_t g_within_range_calls = 0;
+std::uint64_t g_assign_calls = 0;
+std::uint64_t g_distance_calls = 0;
 
 std::uint64_t make_grid_key(int gx, int gy) {
   return (std::uint64_t(std::uint32_t(gx)) << 32) | std::uint32_t(gy);
@@ -47,6 +55,19 @@ std::uint64_t make_grid_key(int gx, int gy) {
 
 int get_grid_coord(double coordinate, double cell_size) {
   return int(std::floor(coordinate / cell_size));
+}
+
+double elapsed_ms(const PerfClock::time_point& start) {
+  return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(PerfClock::now() - start).count();
+}
+
+bool should_sample(std::uint64_t& call_counter) {
+  call_counter++;
+  return (call_counter & PERF_SAMPLE_MASK) == 0;
+}
+
+double sample_scale() {
+  return double(PERF_SAMPLE_MASK + 1);
 }
 }
 
@@ -80,6 +101,18 @@ TopoFeature::~TopoFeature() {
 
 Box2 TopoFeature::get_bbox2d() {
   return _bbox2d;
+}
+
+void TopoFeature::reset_perf_counters() {
+  g_topofeature_perf = TopoFeaturePerfCounters{};
+  g_point_in_polygon_calls = 0;
+  g_within_range_calls = 0;
+  g_assign_calls = 0;
+  g_distance_calls = 0;
+}
+
+TopoFeaturePerfCounters TopoFeature::get_perf_counters() {
+  return g_topofeature_perf;
 }
 
 std::string TopoFeature::get_id() {
@@ -857,6 +890,11 @@ bool TopoFeature::has_segment(const Point2& a, const Point2& b, int& aringi, int
  * is used for the innerbuffer configuration setting
  */
 float TopoFeature::get_distance_to_boundaries(const Point2& p) {
+  bool sample = should_sample(g_distance_calls);
+  PerfClock::time_point start;
+  if (sample) {
+    start = PerfClock::now();
+  }
   Point2 a, b;
   Segment2 s;
   double dmin = 99999;
@@ -881,6 +919,9 @@ float TopoFeature::get_distance_to_boundaries(const Point2& p) {
   process_ring(_p2->outer());
   for (const Ring2& iring : _p2->inners()) {
     process_ring(iring);
+  }
+  if (sample) {
+    g_topofeature_perf.distance_to_boundaries_ms += elapsed_ms(start) * sample_scale();
   }
   return (float)dmin;
 }
@@ -1134,9 +1175,17 @@ void TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, d
  * later all these values are used to lift the polygon (and put values in _p2z)
  */
 bool TopoFeature::assign_elevation_to_vertex(const Point2& p, double z, float radius) {
+  bool sample = should_sample(g_assign_calls);
+  PerfClock::time_point start;
+  if (sample) {
+    start = PerfClock::now();
+  }
   double sqr_radius = radius * radius;
   int zcm = int(z * 100);
   assign_to_vertices_within_distance(p, zcm, radius, sqr_radius);
+  if (sample) {
+    g_topofeature_perf.assign_elevation_to_vertex_ms += elapsed_ms(start) * sample_scale();
+  }
   return true;
 }
 
@@ -1152,20 +1201,40 @@ bool TopoFeature::within_vertex_distance(const Point2& p, double radius) {
 }
 
 bool TopoFeature::within_range(const Point2& p, double radius) {
+  bool sample = should_sample(g_within_range_calls);
+  PerfClock::time_point start;
+  if (sample) {
+    start = PerfClock::now();
+  }
   if (point_in_polygon(p)) {
+    if (sample) {
+      g_topofeature_perf.within_range_ms += elapsed_ms(start) * sample_scale();
+    }
     return true;
   }
-  return within_vertex_distance(p, radius);
+  bool in_distance = within_vertex_distance(p, radius);
+  if (sample) {
+    g_topofeature_perf.within_range_ms += elapsed_ms(start) * sample_scale();
+  }
+  return in_distance;
 }
 
 // based on http://stackoverflow.com/questions/217578/how-can-i-determine-whether-a-2d-point-is-within-a-polygon/2922778#2922778
 bool TopoFeature::point_in_polygon(const Point2& p) {
+  bool sample = should_sample(g_point_in_polygon_calls);
+  PerfClock::time_point start;
+  if (sample) {
+    start = PerfClock::now();
+  }
   double px = p.x();
   double py = p.y();
   if ((px < bg::get<bg::min_corner, 0>(_bbox2d)) ||
       (px > bg::get<bg::max_corner, 0>(_bbox2d)) ||
       (py < bg::get<bg::min_corner, 1>(_bbox2d)) ||
       (py > bg::get<bg::max_corner, 1>(_bbox2d))) {
+    if (sample) {
+      g_topofeature_perf.point_in_polygon_ms += elapsed_ms(start) * sample_scale();
+    }
     return false;
   }
 
@@ -1176,9 +1245,15 @@ bool TopoFeature::point_in_polygon(const Point2& p) {
     for (const std::vector<RingEdgeCacheEntry>& inner_cache : _inner_edge_caches) {
       bool insideInner = point_in_ring_cache(inner_cache, p);
       if (insideInner) {
+        if (sample) {
+          g_topofeature_perf.point_in_polygon_ms += elapsed_ms(start) * sample_scale();
+        }
         return false;
       }
     }
+  }
+  if (sample) {
+    g_topofeature_perf.point_in_polygon_ms += elapsed_ms(start) * sample_scale();
   }
   return insideOuter;
 }

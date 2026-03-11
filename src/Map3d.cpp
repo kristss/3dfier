@@ -35,6 +35,15 @@
 #include "Map3d.h"
 #include <ogrsf_frmts.h>
 #include <algorithm>
+#include <chrono>
+
+namespace {
+using Clock = std::chrono::steady_clock;
+
+double duration_ms(const Clock::time_point& start) {
+  return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(Clock::now() - start).count();
+}
+}
 
 Map3d::Map3d() {
   OGRRegisterAll();
@@ -691,6 +700,7 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
     return;
 
   std::vector<PairIndexed> re;
+  auto queryStart = Clock::now();
   float x = laspt.get_x();
   float y = laspt.get_y();
   Point2 minp(x - _radius_vertex_elevation, y - _radius_vertex_elevation);
@@ -701,6 +711,8 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   maxp = Point2(x + _building_radius_vertex_elevation, y + _building_radius_vertex_elevation);
   querybox = Box2(minp, maxp);
   _rtree_buildings.query(bgi::intersects(querybox), std::back_inserter(re));
+  _perf.points_ingest_rtree_query_ms += duration_ms(queryStart);
+  _perf.point_feature_candidates += re.size();
 
   auto class_is_allowed = [&](AllowedLASTopo topoClass, int lasClass) {
     if (lasClass >= 0 && lasClass < 256) {
@@ -724,10 +736,12 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   std::vector<AcceptedCandidate> accepted;
   accepted.reserve(re.size());
 
+  auto filterStart = Clock::now();
   int c = int(laspt.classification);
   for (auto& v : re) {
     TopoFeature* f = v.second;
     float radius = _radius_vertex_elevation;
+
     bool bInsert = false;
     bool bWithin = false;
     if (f->get_class() == BUILDING) {
@@ -760,12 +774,16 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
       accepted.push_back({ f, radius, bWithin });
     }
   }
+  _perf.points_ingest_candidate_filter_ms += duration_ms(filterStart);
 
+  auto insertStart = Clock::now();
   Point2 p(x, y);
   double z = laspt.get_z();
   for (const AcceptedCandidate& candidate : accepted) {
     candidate.feature->add_elevation_point(p, z, candidate.radius, c, candidate.within);
+    _perf.accepted_inserts++;
   }
+  _perf.points_ingest_feature_insert_ms += duration_ms(insertStart);
 }
 
 void Map3d::cleanup_elevations() {
@@ -786,21 +804,27 @@ bool Map3d::threeDfy(bool stitching) {
 
   try {
     std::clog << "===== /LIFTING =====\n";
+    auto stageStart = Clock::now();
     for (auto& f : _lsFeatures) {
       f->lift();
     }
+    _perf.lift_ms += duration_ms(stageStart);
     std::clog << "===== LIFTING/ =====\n";
     if (stitching == true) {
       std::clog << "=====  /ADJACENT FEATURES =====\n";
+      stageStart = Clock::now();
       for (auto& f : _lsFeatures) {
         this->collect_adjacent_features(f);
       }
+      _perf.adjacent_collection_ms += duration_ms(stageStart);
       std::clog << "=====  ADJACENT FEATURES/ =====\n";
 
       std::clog << "=====  /STITCHING =====\n";
+      stageStart = Clock::now();
       this->stitch_lifted_features();
       //-- handle bridges seperately
       this->stitch_bridges();
+      _perf.stitching_ms += duration_ms(stageStart);
       std::clog << "=====  STITCHING/ =====\n";
 
       //-- Sort all node column vectors
@@ -816,14 +840,17 @@ bool Map3d::threeDfy(bool stitching) {
       }
 
       std::clog << "=====  /BOWTIES =====\n";
+      stageStart = Clock::now();
       for (auto& f : _lsFeatures) {
         if (f->has_vertical_walls()) {
           f->fix_bowtie();
         }
       }
+      _perf.bowties_ms += duration_ms(stageStart);
       std::clog << "=====  BOWTIES/ =====\n";
 
       std::clog << "=====  /VERTICAL WALLS =====\n";
+      stageStart = Clock::now();
       for (auto& f : _lsFeatures) {
         if (f->get_class() == BUILDING) {
           Building* b = dynamic_cast<Building*>(f);
@@ -833,6 +860,7 @@ bool Map3d::threeDfy(bool stitching) {
           f->construct_vertical_walls(_nc);
         }
       }
+      _perf.vertical_walls_ms += duration_ms(stageStart);
       std::clog << "=====  VERTICAL WALLS/ =====\n";
     }
   }
@@ -848,6 +876,7 @@ bool Map3d::threeDfy(bool stitching) {
  */
 bool Map3d::construct_CDT() {
   std::clog << "=====  /CDT =====\n";
+  auto stageStart = Clock::now();
   for (auto& p : _lsFeatures) {
     try {
       p->buildCDT();
@@ -857,6 +886,7 @@ bool Map3d::construct_CDT() {
       return false;
     }
   }
+  _perf.cdt_ms += duration_ms(stageStart);
   std::clog << "=====  CDT/ =====\n";
   return true;
 }
@@ -873,6 +903,7 @@ bool Map3d::save_building_variables() {
  */
 bool Map3d::construct_rtree() {
   std::clog << "Constructing the R-tree...";
+  auto stageStart = Clock::now();
   for (auto p : _lsFeatures) {
     if (p->get_class() == BUILDING) {
       _rtree_buildings.insert(std::make_pair(p->get_bbox2d(), p));
@@ -881,6 +912,7 @@ bool Map3d::construct_rtree() {
       _rtree.insert(std::make_pair(p->get_bbox2d(), p));
     }
   }
+  _perf.rtree_build_ms += duration_ms(stageStart);
   std::clog << " done.\n";
 
   //-- update the bounding box from _rtree and _rtree_buildings 
@@ -903,6 +935,7 @@ bool Map3d::construct_rtree() {
  * setup the GDAL driver, datasource and read layers
  */
 bool Map3d::add_polygons_files(std::vector<PolygonFile> &files) {
+  auto stageStart = Clock::now();
 #if GDAL_VERSION_MAJOR < 2
   if (OGRSFDriverRegistrar::GetRegistrar()->GetDriverCount() == 0)
     OGRRegisterAll();
@@ -950,6 +983,8 @@ bool Map3d::add_polygons_files(std::vector<PolygonFile> &files) {
       return false;
     }
   }
+  _perf.polygons_read_ms += duration_ms(stageStart);
+  _perf.polygon_count = _lsFeatures.size();
   return true;
 }
 
@@ -1157,6 +1192,8 @@ void Map3d::extract_feature(OGRFeature *f, std::string layername, const char *id
  * check if point intersects with Map3D bounding box
  */
 bool Map3d::add_las_file(PointFile pointFile) {
+  auto stageStart = Clock::now();
+  _perf.las_files_count++;
   std::clog << "Reading LAS/LAZ file: " << pointFile.filename << std::endl;
 
   LASreadOpener lasreadopener;
@@ -1172,6 +1209,7 @@ bool Map3d::add_las_file(PointFile pointFile) {
       return false;
     }
     LASheader header = lasreader->header;
+    _perf.las_points_total += header.number_of_point_records;
 
     if (check_bounds(header.min_x, header.max_x, header.min_y, header.max_y)) {
       std::array<std::uint8_t, 256> omit_class_lut;
@@ -1206,11 +1244,14 @@ bool Map3d::add_las_file(PointFile pointFile) {
         LASpoint const& p = lasreader->point;
         //-- set the thinning filter
         if (i % pointFile.thinning == 0) {
+          _perf.points_after_thinning++;
           //-- set the classification filter
           int classification = int(p.classification);
           if ((classification < 0 || classification >= 256) || (omit_class_lut[classification] == 0)) {
+            _perf.points_after_omit++;
             //-- set the bounds filter
             if (check_bounds(p.X, p.X, p.Y, p.Y)) {
+              _perf.points_after_bounds++;
               this->add_elevation_point(p);
             }
           }
@@ -1232,6 +1273,12 @@ bool Map3d::add_las_file(PointFile pointFile) {
     lasreader->close();
     return false;
   }
+  _perf.points_ingest_ms += duration_ms(stageStart);
+  TopoFeaturePerfCounters topo_perf = TopoFeature::get_perf_counters();
+  _perf.point_in_polygon_ms = topo_perf.point_in_polygon_ms;
+  _perf.within_range_ms = topo_perf.within_range_ms;
+  _perf.assign_elevation_to_vertex_ms = topo_perf.assign_elevation_to_vertex_ms;
+  _perf.distance_to_boundaries_ms = topo_perf.distance_to_boundaries_ms;
   return true;
 }
 
@@ -1255,10 +1302,12 @@ void Map3d::collect_adjacent_features(TopoFeature* f) {
     }
   }
 
+  _perf.adjacency_candidates += re.size();
   for (auto& each : re) {
     TopoFeature* fadj = each.second;
     if (f != fadj && f->adjacent(*(fadj->get_Polygon2()))){
       f->add_adjacent_feature(fadj);
+      _perf.adjacency_true_hits++;
     }
   }
 }
@@ -1904,4 +1953,16 @@ void Map3d::add_allowed_las_class_within(AllowedLASTopo c, int i) {
   if (i >= 0 && i < 256) {
     _las_within_lut[c][i] = 1;
   }
+}
+
+const PerfStats& Map3d::get_perf_stats() const {
+  return _perf;
+}
+
+void Map3d::add_output_write_ms(double duration_ms_value) {
+  _perf.output_write_ms += duration_ms_value;
+}
+
+void Map3d::set_total_runtime_ms(double duration_ms_value) {
+  _perf.total_runtime_ms = duration_ms_value;
 }

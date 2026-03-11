@@ -38,6 +38,13 @@
 #include <cstdint>
 #include <random>
 
+struct TopoFeaturePerfCounters {
+  double point_in_polygon_ms = 0.0;
+  double within_range_ms = 0.0;
+  double assign_elevation_to_vertex_ms = 0.0;
+  double distance_to_boundaries_ms = 0.0;
+};
+
 class TopoFeature {
 public:
   TopoFeature(char *wkt, std::string layername, AttributeMap attributes, std::string pid);
@@ -86,6 +93,8 @@ public:
   void         get_citygml_attributes(std::wostream& of, const AttributeMap& attributes);
   void         get_cityjson_attributes(nlohmann::json& f, const AttributeMap& attributes);
   void         cleanup_lidarelevs();
+  static void  reset_perf_counters();
+  static TopoFeaturePerfCounters get_perf_counters();
 protected:
   Polygon2*                         _p2;
   Box2                              _bbox2d;
