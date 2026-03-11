@@ -34,6 +34,9 @@
 #include "io.h"
 #include "polyfit.hpp"
 #include "nlohmann-json/json.hpp"
+#include <vector>
+#include <cstdint>
+#include <random>
 
 class TopoFeature {
 public:
@@ -85,6 +88,7 @@ public:
   void         cleanup_lidarelevs();
 protected:
   Polygon2*                         _p2;
+  Box2                              _bbox2d;
   std::vector< std::vector<int> >   _p2z;
   std::vector<TopoFeature*>*        _adjFeatures;
   std::string                       _id;
@@ -99,10 +103,36 @@ protected:
   std::vector< std::pair<Point3, std::string> >   _vertices_vw;
   std::vector<Triangle>                           _triangles_vw;
 
+  struct VertexIndexEntry {
+    int ringi;
+    int pi;
+    Point2 point;
+  };
+
+  struct RingEdgeCacheEntry {
+    double xi;
+    double yi;
+    double dx;
+    double dy;
+  };
+
+  std::vector<VertexIndexEntry>                           _vertex_index_entries;
+  std::unordered_map<std::uint64_t, std::vector<std::size_t> > _vertex_grid_index;
+  std::vector<RingEdgeCacheEntry>                         _outer_edge_cache;
+  std::vector<std::vector<RingEdgeCacheEntry> >           _inner_edge_caches;
+  double                                                   _vertex_grid_cell_size = 0.0;
+  bool                                                     _vertex_grid_ready = false;
+
   Point2  get_next_point2_in_ring(int ringi, int i, int& pi);
   bool    assign_elevation_to_vertex(const Point2& p, double z, float radius);
   bool    within_range(const Point2& p, double radius);
+  bool    within_vertex_distance(const Point2& p, double radius);
   bool    point_in_polygon(const Point2& p);
+  void    ensure_vertex_grid(double query_radius);
+  bool    has_vertex_within_distance(const Point2& p, double radius, double sqr_radius);
+  void    assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius);
+  void    build_edge_cache();
+  bool    point_in_ring_cache(const std::vector<RingEdgeCacheEntry>& edge_cache, const Point2& p);
   void    lift_each_boundary_vertices(float percentile);
   void    lift_all_boundary_vertices_same_height(int height);
 
@@ -171,6 +201,8 @@ protected:
   double              _simplification_tinsimp;
   float               _innerbuffer;
   std::vector<Point3> _lidarpts;
+  std::mt19937        _rng;
+  std::uniform_int_distribution<int> _simplification_dist;
 };
 
 #endif 

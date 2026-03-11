@@ -35,6 +35,20 @@
 
 #include "TopoFeature.h"
 #include <cstddef>
+#include <algorithm>
+#include <cmath>
+
+namespace {
+constexpr double MIN_VERTEX_GRID_SIZE = 1e-3;
+
+std::uint64_t make_grid_key(int gx, int gy) {
+  return (std::uint64_t(std::uint32_t(gx)) << 32) | std::uint32_t(gy);
+}
+
+int get_grid_coord(double coordinate, double cell_size) {
+  return int(std::floor(coordinate / cell_size));
+}
+}
 
 TopoFeature::TopoFeature(char *wkt, std::string layername, AttributeMap attributes, std::string pid) {
   _id = pid;
@@ -44,6 +58,8 @@ TopoFeature::TopoFeature(char *wkt, std::string layername, AttributeMap attribut
   bg::read_wkt(wkt, *_p2);
   bg::unique(*_p2); //-- remove duplicate vertices
   bg::correct(*_p2); //-- correct the orientation of the polygons!
+  _bbox2d = bg::return_envelope<Box2>(*_p2);
+  build_edge_cache();
 
   _adjFeatures = new std::vector<TopoFeature*>;
   _p2z.resize(bg::num_interior_rings(*_p2) + 1);
@@ -63,7 +79,7 @@ TopoFeature::~TopoFeature() {
 }
 
 Box2 TopoFeature::get_bbox2d() {
-  return bg::return_envelope<Box2>(*_p2);
+  return _bbox2d;
 }
 
 std::string TopoFeature::get_id() {
@@ -841,19 +857,10 @@ bool TopoFeature::has_segment(const Point2& a, const Point2& b, int& aringi, int
  * is used for the innerbuffer configuration setting
  */
 float TopoFeature::get_distance_to_boundaries(const Point2& p) {
-  //-- collect the rings of the polygon
-  std::vector<Ring2> therings;
-  therings.push_back(_p2->outer());
-  for (Ring2& iring : _p2->inners())
-    therings.push_back(iring);
-
-  //-- process each vertex of the polygon separately
   Point2 a, b;
   Segment2 s;
-  int ringi = -1;
   double dmin = 99999;
-  for (Ring2& ring : therings) {
-    ringi++;
+  auto process_ring = [&](const Ring2& ring) {
     for (int ai = 0; ai < ring.size(); ai++) {
       a = ring[ai];
       if (ai == (ring.size() - 1))
@@ -869,6 +876,11 @@ float TopoFeature::get_distance_to_boundaries(const Point2& p) {
       if (d < dmin)
         dmin = d;
     }
+  };
+
+  process_ring(_p2->outer());
+  for (const Ring2& iring : _p2->inners()) {
+    process_ring(iring);
   }
   return (float)dmin;
 }
@@ -978,6 +990,143 @@ void TopoFeature::set_vertex_elevation(int ringi, int pi, int z) {
   _p2z[ringi][pi] = z;
 }
 
+void TopoFeature::build_edge_cache() {
+  auto build_ring_cache = [](const Ring2& ring, std::vector<RingEdgeCacheEntry>& edge_cache) {
+    edge_cache.clear();
+    edge_cache.reserve(ring.size());
+    for (int i = 0, j = int(ring.size()) - 1; i < ring.size(); j = i++) {
+      RingEdgeCacheEntry edge;
+      edge.xi = ring[i].x();
+      edge.yi = ring[i].y();
+      edge.dx = ring[j].x() - ring[i].x();
+      edge.dy = ring[j].y() - ring[i].y();
+      edge_cache.push_back(edge);
+    }
+  };
+
+  build_ring_cache(_p2->outer(), _outer_edge_cache);
+  const std::vector<Ring2>& irings = _p2->inners();
+  _inner_edge_caches.clear();
+  _inner_edge_caches.resize(irings.size());
+  for (std::size_t i = 0; i < irings.size(); ++i) {
+    build_ring_cache(irings[i], _inner_edge_caches[i]);
+  }
+}
+
+bool TopoFeature::point_in_ring_cache(const std::vector<RingEdgeCacheEntry>& edge_cache, const Point2& p) {
+  bool inside = false;
+  double px = p.x();
+  double py = p.y();
+  for (const RingEdgeCacheEntry& edge : edge_cache) {
+    if (((edge.yi > py) != ((edge.yi + edge.dy) > py)) &&
+      (px < (edge.dx * (py - edge.yi) / edge.dy + edge.xi))) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+void TopoFeature::ensure_vertex_grid(double query_radius) {
+  double desired_cell_size = std::max(MIN_VERTEX_GRID_SIZE, query_radius);
+  if (_vertex_grid_ready && std::abs(_vertex_grid_cell_size - desired_cell_size) < 1e-9) {
+    return;
+  }
+
+  _vertex_grid_ready = true;
+  _vertex_grid_cell_size = desired_cell_size;
+  _vertex_grid_index.clear();
+  _vertex_index_entries.clear();
+
+  const Ring2& oring = _p2->outer();
+  std::size_t estimated_vertices = oring.size();
+  const std::vector<Ring2>& irings = _p2->inners();
+  for (const Ring2& iring : irings) {
+    estimated_vertices += iring.size();
+  }
+  _vertex_index_entries.reserve(estimated_vertices);
+  _vertex_grid_index.reserve(estimated_vertices);
+
+  for (int i = 0; i < oring.size(); ++i) {
+    _vertex_index_entries.push_back({0, i, oring[i]});
+  }
+
+  int ringi = 1;
+  for (const Ring2& iring : irings) {
+    for (int i = 0; i < iring.size(); ++i) {
+      _vertex_index_entries.push_back({ringi, i, iring[i]});
+    }
+    ringi++;
+  }
+
+  for (std::size_t idx = 0; idx < _vertex_index_entries.size(); ++idx) {
+    const VertexIndexEntry& v = _vertex_index_entries[idx];
+    int gx = get_grid_coord(v.point.x(), _vertex_grid_cell_size);
+    int gy = get_grid_coord(v.point.y(), _vertex_grid_cell_size);
+    _vertex_grid_index[make_grid_key(gx, gy)].push_back(idx);
+  }
+}
+
+bool TopoFeature::has_vertex_within_distance(const Point2& p, double radius, double sqr_radius) {
+  ensure_vertex_grid(radius);
+  if (_vertex_index_entries.empty())
+    return false;
+  double px = p.x();
+  double py = p.y();
+
+  int gx = get_grid_coord(p.x(), _vertex_grid_cell_size);
+  int gy = get_grid_coord(p.y(), _vertex_grid_cell_size);
+  int cell_range = std::max(1, int(std::ceil(radius / _vertex_grid_cell_size)));
+
+  for (int dx = -cell_range; dx <= cell_range; ++dx) {
+    for (int dy = -cell_range; dy <= cell_range; ++dy) {
+      auto it = _vertex_grid_index.find(make_grid_key(gx + dx, gy + dy));
+      if (it != _vertex_grid_index.end()) {
+        for (std::size_t idx : it->second) {
+          const VertexIndexEntry& vertex = _vertex_index_entries[idx];
+          double vx = vertex.point.x();
+          double vy = vertex.point.y();
+          double ddx = px - vx;
+          double ddy = py - vy;
+          if ((ddx * ddx + ddy * ddy) <= sqr_radius) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+void TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius) {
+  ensure_vertex_grid(radius);
+  if (_vertex_index_entries.empty())
+    return;
+  double px = p.x();
+  double py = p.y();
+
+  int gx = get_grid_coord(p.x(), _vertex_grid_cell_size);
+  int gy = get_grid_coord(p.y(), _vertex_grid_cell_size);
+  int cell_range = std::max(1, int(std::ceil(radius / _vertex_grid_cell_size)));
+
+  for (int dx = -cell_range; dx <= cell_range; ++dx) {
+    for (int dy = -cell_range; dy <= cell_range; ++dy) {
+      auto it = _vertex_grid_index.find(make_grid_key(gx + dx, gy + dy));
+      if (it != _vertex_grid_index.end()) {
+        for (std::size_t idx : it->second) {
+          const VertexIndexEntry& vertex = _vertex_index_entries[idx];
+          double vx = vertex.point.x();
+          double vy = vertex.point.y();
+          double ddx = px - vx;
+          double ddy = py - vy;
+          if ((ddx * ddx + ddy * ddy) <= sqr_radius) {
+            _lidarelevs[vertex.ringi][vertex.pi].push_back(zcm);
+          }
+        }
+      }
+    }
+  }
+}
+
 /**
  * push supplied z to the elevation vector of the vertex
  * only pushed when within distance of vertex 
@@ -987,23 +1136,7 @@ void TopoFeature::set_vertex_elevation(int ringi, int pi, int z) {
 bool TopoFeature::assign_elevation_to_vertex(const Point2& p, double z, float radius) {
   double sqr_radius = radius * radius;
   int zcm = int(z * 100);
-
-  int ringi = 0;
-  Ring2& oring = _p2->outer();
-  for (int i = 0; i < oring.size(); i++) {
-    if (sqr_distance(p, oring[i]) <= sqr_radius)
-      _lidarelevs[ringi][i].push_back(zcm);
-  }
-  ringi++;
-  std::vector<Ring2>& irings = _p2->inners();
-  for (Ring2& iring : irings) {
-    for (int i = 0; i < iring.size(); i++) {
-      if (sqr_distance(p, iring[i]) <= sqr_radius) {
-        _lidarelevs[ringi][i].push_back(zcm);
-      }
-    }
-    ringi++;
-  }
+  assign_to_vertices_within_distance(p, zcm, radius, sqr_radius);
   return true;
 }
 
@@ -1013,56 +1146,35 @@ bool TopoFeature::assign_elevation_to_vertex(const Point2& p, double z, float ra
  * point is within polygon or within distance of a vertex
  * uses radius_vertex_elevation from configuration
  */
+bool TopoFeature::within_vertex_distance(const Point2& p, double radius) {
+  double sqr_radius = radius * radius;
+  return has_vertex_within_distance(p, radius, sqr_radius);
+}
+
 bool TopoFeature::within_range(const Point2& p, double radius) {
   if (point_in_polygon(p)) {
     return true;
-  }  
-  
-  double sqr_radius = radius * radius;
-  const Ring2& oring = _p2->outer();
-  //-- point is within range of the polygon rings
-  for (int i = 0; i < oring.size(); i++) {
-    if (sqr_distance(p, oring[i]) <= sqr_radius) {
-      return true;
-    }
   }
-  std::vector<Ring2>& irings = _p2->inners();
-  for (Ring2& iring : irings) {
-    for (int i = 0; i < iring.size(); i++) {
-      if (sqr_distance(p, iring[i]) <= sqr_radius) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return within_vertex_distance(p, radius);
 }
 
 // based on http://stackoverflow.com/questions/217578/how-can-i-determine-whether-a-2d-point-is-within-a-polygon/2922778#2922778
 bool TopoFeature::point_in_polygon(const Point2& p) {
-  //test outer ring
-  const Ring2& oring = _p2->outer();
-  int nvert = oring.size();
-  int i, j = 0;
-  bool insideOuter = false;
-  for (i = 0, j = nvert - 1; i < nvert; j = i++) {
-    double py = p.y();
-    if (((oring[i].y()>py) != (oring[j].y()>py)) &&
-      (p.x() < (oring[j].x() - oring[i].x()) * (py - oring[i].y()) / (oring[j].y() - oring[i].y()) + oring[i].x()))
-      insideOuter = !insideOuter;
+  double px = p.x();
+  double py = p.y();
+  if ((px < bg::get<bg::min_corner, 0>(_bbox2d)) ||
+      (px > bg::get<bg::max_corner, 0>(_bbox2d)) ||
+      (py < bg::get<bg::min_corner, 1>(_bbox2d)) ||
+      (py > bg::get<bg::max_corner, 1>(_bbox2d))) {
+    return false;
   }
+
+  //test outer ring
+  bool insideOuter = point_in_ring_cache(_outer_edge_cache, p);
   if (insideOuter) {
     //test inner rings
-    auto irings = _p2->inners();
-    for (Ring2& iring : irings) {
-      bool insideInner = false;
-      int nvert = iring.size();
-      int i, j = 0;
-      for (i = 0, j = nvert - 1; i < nvert; j = i++) {
-        double py = p.y();
-        if (((iring[i].y() > py) != (iring[j].y() > py)) &&
-          (p.x() < (iring[j].x() - iring[i].x()) * (py - iring[i].y()) / (iring[j].y() - iring[i].y()) + iring[i].x()))
-          insideInner = !insideInner;
-      }
+    for (const std::vector<RingEdgeCacheEntry>& inner_cache : _inner_edge_caches) {
+      bool insideInner = point_in_ring_cache(inner_cache, p);
       if (insideInner) {
         return false;
       }
@@ -1278,13 +1390,22 @@ int Flat::get_number_vertices() {
 }
 
 bool Flat::add_elevation_point(Point2& p, double z, float radius, int lasclass, bool within) {
-  // if within then a point must lay within the polygon, otherwise add
-  if (!within || (within && point_in_polygon(p))) {
-    if (within_range(p, radius)) {
-      int zcm = int(z * 100);
-      //-- 1. assign to polygon since within the threshold value (buffering of polygon)
-      _zvaluesinside.push_back(zcm);
+  bool inside = false;
+  if (within) {
+    inside = point_in_polygon(p);
+    if (!inside) {
+      return true;
     }
+  }
+
+  bool accepted = inside;
+  if (!accepted) {
+    accepted = within_range(p, radius);
+  }
+  if (accepted) {
+    int zcm = int(z * 100);
+    //-- 1. assign to polygon since within the threshold value (buffering of polygon)
+    _zvaluesinside.push_back(zcm);
   }
   return true;
 }
@@ -1324,8 +1445,12 @@ int Boundary3D::get_number_vertices() {
 }
 
 bool Boundary3D::add_elevation_point(Point2& p, double z, float radius, int lasclass, bool within) {
+  bool inside = false;
+  if (within) {
+    inside = point_in_polygon(p);
+  }
   // if within then a point must lay within the polygon, otherwise add
-  if (!within || (within && point_in_polygon(p))) {
+  if (!within || inside) {
     assign_elevation_to_vertex(p, z, radius);
   }
   return true;
@@ -1458,7 +1583,9 @@ void Boundary3D::detect_outliers(bool flatten, float max_outlier_fraction){
  */
 
 TIN::TIN(char* wkt, std::string layername, AttributeMap attributes, std::string pid, int simplification, double simplification_tinsimp, float innerbuffer)
-  : TopoFeature(wkt, layername, attributes, pid) {
+  : TopoFeature(wkt, layername, attributes, pid),
+    _rng(std::random_device{}()),
+    _simplification_dist(1, std::max(1, simplification)) {
   _simplification = simplification;
   _simplification_tinsimp = simplification_tinsimp;
   _innerbuffer = innerbuffer;
@@ -1469,22 +1596,20 @@ int TIN::get_number_vertices() {
 }
 
 bool TIN::add_elevation_point(Point2& p, double z, float radius, int lasclass, bool within) {
+  bool inside = point_in_polygon(p);
   bool toadd = false;
   // if within then a point must lay within the polygon, otherwise add
-  if (!within || (within && point_in_polygon(p))) {
+  if (!within || inside) {
     assign_elevation_to_vertex(p, z, radius);
   }
   if (_simplification <= 1)
     toadd = true;
   else {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> dis(1, _simplification);
-    if (dis(gen) == 1)
+    if (_simplification_dist(_rng) == 1)
       toadd = true;
   }
   // Add the point to the lidar points if it is within the polygon and respecting the inner buffer size
-  if (toadd && point_in_polygon(p) && (_innerbuffer == 0.0 || this->get_distance_to_boundaries(p) > _innerbuffer)) {
+  if (toadd && inside && (_innerbuffer == 0.0 || this->get_distance_to_boundaries(p) > _innerbuffer)) {
     _lidarpts.push_back(Point3(p.x(), p.y(), z));
   }
   return toadd;
