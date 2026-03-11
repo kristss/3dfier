@@ -35,6 +35,12 @@
 #include "boost/chrono.hpp"
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <chrono>
+#include <cstdio>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 std::string VERSION = "1.4.0";
 
@@ -42,9 +48,15 @@ bool validate_yaml(const char* arg, std::set<std::string>& allowedFeatures);
 int main(int argc, const char * argv[]);
 std::string print_license();
 void print_duration(std::string message, boost::chrono::time_point<boost::chrono::steady_clock> startTime);
+std::string get_timestamp_utc();
+std::string get_git_describe();
+std::string csv_escape(const std::string& value);
+bool append_perf_csv(const std::string& filename, const std::string& config_path, const PerfStats& perf);
+double get_elapsed_ms(std::chrono::steady_clock::time_point start_time);
 
 int main(int argc, const char * argv[]) {
   auto startTime = boost::chrono::high_resolution_clock::now();
+  auto totalStart = std::chrono::steady_clock::now();
   boost::locale::generator gen;
   std::locale loc = gen("en_US.UTF-8");
   std::locale::global(loc);
@@ -75,6 +87,7 @@ int main(int argc, const char * argv[]) {
   outputs["PostGIS-PDOK"] = "";
   outputs["PostGIS-PDOK-CityGML"] = "";
   outputs["GDAL"] = "";
+  std::string perf_csv;
   std::string f_yaml;
   try {
     namespace po = boost::program_options;
@@ -100,6 +113,7 @@ int main(int argc, const char * argv[]) {
       ("PostGIS-PDOK", po::value<std::string>(&outputs["PostGIS-PDOK"]), "Output ")
       ("PostGIS-PDOK-CityGML", po::value<std::string>(&outputs["PostGIS-PDOK-CityGML"]), "Output ")
       ("GDAL", po::value<std::string>(&outputs["GDAL"]), "Output ")
+      ("perf-csv", po::value<std::string>(&perf_csv), "Append performance metrics CSV")
       ;
     po::options_description pohidden("Hidden options");
     pohidden.add_options()
@@ -150,17 +164,35 @@ int main(int argc, const char * argv[]) {
         return EXIT_FAILURE;
       }
     }
-    for (auto& output : vm) {
-      if ((output.first != "yaml") && (output.first.find("PostGIS") == std::string::npos)) {
-        //-- check paths of the output file
-        boost::filesystem::path p(outputs[output.first]);
-        try {
-          boost::filesystem::path pcan = canonical(p.parent_path(), boost::filesystem::current_path());
-        }
-        catch (boost::filesystem::filesystem_error &e) {
-          std::cerr << "ERROR: " << e.what() << ". Abort." << std::endl;
-          return EXIT_FAILURE;
-        }
+    for (const auto& output : outputs) {
+      if (output.second.empty() || output.first.find("PostGIS") != std::string::npos) {
+        continue;
+      }
+      boost::filesystem::path p(output.second);
+      boost::filesystem::path parent = p.parent_path();
+      if (parent.empty()) {
+        parent = ".";
+      }
+      try {
+        boost::filesystem::path pcan = canonical(parent, boost::filesystem::current_path());
+      }
+      catch (boost::filesystem::filesystem_error &e) {
+        std::cerr << "ERROR: " << e.what() << ". Abort." << std::endl;
+        return EXIT_FAILURE;
+      }
+    }
+    if (!perf_csv.empty()) {
+      boost::filesystem::path p(perf_csv);
+      boost::filesystem::path parent = p.parent_path();
+      if (parent.empty()) {
+        parent = ".";
+      }
+      try {
+        boost::filesystem::path pcan = canonical(parent, boost::filesystem::current_path());
+      }
+      catch (boost::filesystem::filesystem_error &e) {
+        std::cerr << "ERROR: " << e.what() << ". Abort." << std::endl;
+        return EXIT_FAILURE;
       }
     }
   }
@@ -173,7 +205,7 @@ int main(int argc, const char * argv[]) {
   std::set<std::string> allowedFeatures{ "Building", "Water", "Terrain", "Road", "Forest", "Separation", "Bridge/Overpass" };
 
   //-- validate the YAML file right now, nicer for the user
-   if (validate_yaml(argv[1], allowedFeatures) == false) {
+   if (validate_yaml(f_yaml.c_str(), allowedFeatures) == false) {
      std::cerr << "ERROR: config file (*.yml) is not valid. Aborting.\n";
      return EXIT_FAILURE;
    }
@@ -602,6 +634,7 @@ int main(int argc, const char * argv[]) {
     << bg::get<bg::max_corner, 1>(b) << ")\n";
 
   //-- add the elevation data to the map3d
+  TopoFeature::reset_perf_counters();
   auto startPoints = boost::chrono::high_resolution_clock::now();
   for (auto file : elevationFiles) {
     bool added = map3d.add_las_file(file);
@@ -659,6 +692,7 @@ int main(int argc, const char * argv[]) {
 
   //-- iterate over all output
   for (auto& output : outputs) {
+    auto outputStartWall = std::chrono::steady_clock::now();
     auto startFileWriting = boost::chrono::high_resolution_clock::now();
     std::string format = output.first;
     if (output.second == "")
@@ -748,10 +782,18 @@ int main(int argc, const char * argv[]) {
 
     if (fileWritten) {
       print_duration("Features written in %d seconds || %02d:%02d:%02d\n", startFileWriting);
+      map3d.add_output_write_ms(get_elapsed_ms(outputStartWall));
     }
     else {
       std::cerr << "ERROR: Writing features failed for " << format << ". Aborting.\n";
       return EXIT_FAILURE;
+    }
+  }
+
+  map3d.set_total_runtime_ms(get_elapsed_ms(totalStart));
+  if (!perf_csv.empty()) {
+    if (!append_perf_csv(perf_csv, f_yaml, map3d.get_perf_stats())) {
+      std::cerr << "WARNING: failed to append performance CSV: " << perf_csv << std::endl;
     }
   }
 
@@ -799,6 +841,113 @@ void print_duration(std::string message, boost::chrono::time_point<boost::chrono
     boost::chrono::duration_cast<boost::chrono::minutes>(duration).count() % 60,
     (int)boost::chrono::duration_cast<boost::chrono::seconds>(duration).count() % 60
   );
+}
+
+double get_elapsed_ms(std::chrono::steady_clock::time_point start_time) {
+  return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(std::chrono::steady_clock::now() - start_time).count();
+}
+
+std::string get_timestamp_utc() {
+  auto now = std::chrono::system_clock::now();
+  std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+  std::tm time_info;
+#if defined(_WIN32)
+  gmtime_s(&time_info, &now_time);
+#else
+  gmtime_r(&now_time, &time_info);
+#endif
+  std::ostringstream os;
+  os << std::put_time(&time_info, "%Y-%m-%dT%H:%M:%SZ");
+  return os.str();
+}
+
+std::string get_git_describe() {
+#if defined(_WIN32)
+  FILE* pipe = _popen("git describe --always --dirty --tags 2>NUL", "r");
+#else
+  FILE* pipe = popen("git describe --always --dirty --tags 2>/dev/null", "r");
+#endif
+  if (pipe == NULL) {
+    return "";
+  }
+
+  char buffer[256];
+  std::string output;
+  if (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+    output = buffer;
+  }
+#if defined(_WIN32)
+  _pclose(pipe);
+#else
+  pclose(pipe);
+#endif
+  while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
+    output.pop_back();
+  }
+  return output;
+}
+
+std::string csv_escape(const std::string& value) {
+  std::string escaped = value;
+  std::size_t pos = 0;
+  while ((pos = escaped.find('"', pos)) != std::string::npos) {
+    escaped.insert(pos, 1, '"');
+    pos += 2;
+  }
+  return "\"" + escaped + "\"";
+}
+
+bool append_perf_csv(const std::string& filename, const std::string& config_path, const PerfStats& perf) {
+  bool write_header = false;
+  {
+    std::ifstream check_file(filename);
+    write_header = !check_file.good();
+  }
+
+  std::ofstream out(filename, std::ios::app);
+  if (!out.is_open()) {
+    return false;
+  }
+
+  if (write_header) {
+    out << "timestamp_utc,git_describe,config_path,"
+      << "polygons_read_ms,rtree_build_ms,points_ingest_ms,points_ingest_rtree_query_ms,points_ingest_candidate_filter_ms,points_ingest_feature_insert_ms,point_in_polygon_ms,within_range_ms,assign_elevation_to_vertex_ms,distance_to_boundaries_ms,lift_ms,adjacent_collection_ms,stitching_ms,bowties_ms,vertical_walls_ms,cdt_ms,output_write_ms,total_runtime_ms,"
+      << "polygon_count,las_files_count,las_points_total,points_after_thinning,points_after_omit,points_after_bounds,point_feature_candidates,accepted_inserts,adjacency_candidates,adjacency_true_hits\n";
+  }
+
+  out << csv_escape(get_timestamp_utc()) << ","
+    << csv_escape(get_git_describe()) << ","
+    << csv_escape(config_path) << ","
+    << std::fixed << std::setprecision(3)
+    << perf.polygons_read_ms << ","
+    << perf.rtree_build_ms << ","
+    << perf.points_ingest_ms << ","
+    << perf.points_ingest_rtree_query_ms << ","
+    << perf.points_ingest_candidate_filter_ms << ","
+    << perf.points_ingest_feature_insert_ms << ","
+    << perf.point_in_polygon_ms << ","
+    << perf.within_range_ms << ","
+    << perf.assign_elevation_to_vertex_ms << ","
+    << perf.distance_to_boundaries_ms << ","
+    << perf.lift_ms << ","
+    << perf.adjacent_collection_ms << ","
+    << perf.stitching_ms << ","
+    << perf.bowties_ms << ","
+    << perf.vertical_walls_ms << ","
+    << perf.cdt_ms << ","
+    << perf.output_write_ms << ","
+    << perf.total_runtime_ms << ","
+    << perf.polygon_count << ","
+    << perf.las_files_count << ","
+    << perf.las_points_total << ","
+    << perf.points_after_thinning << ","
+    << perf.points_after_omit << ","
+    << perf.points_after_bounds << ","
+    << perf.point_feature_candidates << ","
+    << perf.accepted_inserts << ","
+    << perf.adjacency_candidates << ","
+    << perf.adjacency_true_hits << "\n";
+  return true;
 }
 
 bool validate_yaml(const char* arg, std::set<std::string>& allowedFeatures) {
