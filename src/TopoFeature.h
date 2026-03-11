@@ -125,8 +125,16 @@ protected:
     double dy;
   };
 
+  struct HasPointIndexEntry {
+    int ringi;
+    int pi;
+    Point2 point;
+  };
+
   std::vector<VertexIndexEntry>                           _vertex_index_entries;
   std::unordered_map<std::uint64_t, std::vector<std::size_t> > _vertex_grid_index;
+  std::vector<HasPointIndexEntry>                         _has_point_entries;
+  std::unordered_map<std::uint64_t, std::vector<std::size_t> > _has_point_grid_index;
   std::vector<RingEdgeCacheEntry>                         _outer_edge_cache;
   std::vector<std::vector<RingEdgeCacheEntry> >           _inner_edge_caches;
   double                                                   _vertex_grid_cell_size = 0.0;
@@ -141,6 +149,7 @@ protected:
   bool    has_vertex_within_distance(const Point2& p, double radius, double sqr_radius);
   void    assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius);
   void    build_edge_cache();
+  void    build_has_point_index();
   bool    point_in_ring_cache(const std::vector<RingEdgeCacheEntry>& edge_cache, const Point2& p);
   void    lift_each_boundary_vertices(float percentile);
   void    lift_all_boundary_vertices_same_height(int height);

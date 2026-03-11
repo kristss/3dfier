@@ -81,6 +81,7 @@ TopoFeature::TopoFeature(char *wkt, std::string layername, AttributeMap attribut
   bg::correct(*_p2); //-- correct the orientation of the polygons!
   _bbox2d = bg::return_envelope<Box2>(*_p2);
   build_edge_cache();
+  build_has_point_index();
 
   _adjFeatures = new std::vector<TopoFeature*>;
   _p2z.resize(bg::num_interior_rings(*_p2) + 1);
@@ -931,22 +932,39 @@ float TopoFeature::get_distance_to_boundaries(const Point2& p) {
  * uses squared distance rather then equals for floating point precision errors
  */
 bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vector<int>& pis) {
-  std::vector<Ring2> rings;
-  rings.push_back(_p2->outer());
-  for (Ring2& iring : _p2->inners())
-    rings.push_back(iring);
+  if (_has_point_entries.empty()) {
+    return false;
+  }
+
+  int gx = get_grid_coord(p.x(), TOPODIST);
+  int gy = get_grid_coord(p.y(), TOPODIST);
+  int ring_count = int(_p2->inners().size()) + 1;
+  std::vector<int> min_pi_per_ring(ring_count, -1);
+
+  for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -1; dy <= 1; ++dy) {
+      auto it = _has_point_grid_index.find(make_grid_key(gx + dx, gy + dy));
+      if (it == _has_point_grid_index.end()) {
+        continue;
+      }
+      for (std::size_t idx : it->second) {
+        const HasPointIndexEntry& candidate = _has_point_entries[idx];
+        if (sqr_distance(p, candidate.point) <= SQTOPODIST) {
+          int& min_pi = min_pi_per_ring[candidate.ringi];
+          if (min_pi == -1 || candidate.pi < min_pi) {
+            min_pi = candidate.pi;
+          }
+        }
+      }
+    }
+  }
 
   bool re = false;
-  int ringi = -1;
-  for (Ring2& ring : rings) {
-    ringi++;
-    for (int i = 0; i < ring.size(); i++) {
-      if (sqr_distance(p, ring[i]) <= SQTOPODIST) {
-        ringis.push_back(ringi);
-        pis.push_back(i);
-        re = true;
-        break;
-      }
+  for (int ringi = 0; ringi < ring_count; ++ringi) {
+    if (min_pi_per_ring[ringi] != -1) {
+      ringis.push_back(ringi);
+      pis.push_back(min_pi_per_ring[ringi]);
+      re = true;
     }
   }
   return re;
@@ -1051,6 +1069,40 @@ void TopoFeature::build_edge_cache() {
   _inner_edge_caches.resize(irings.size());
   for (std::size_t i = 0; i < irings.size(); ++i) {
     build_ring_cache(irings[i], _inner_edge_caches[i]);
+  }
+}
+
+void TopoFeature::build_has_point_index() {
+  _has_point_entries.clear();
+  _has_point_grid_index.clear();
+
+  const Ring2& oring = _p2->outer();
+  std::size_t estimated_vertices = oring.size();
+  const std::vector<Ring2>& irings = _p2->inners();
+  for (const Ring2& iring : irings) {
+    estimated_vertices += iring.size();
+  }
+
+  _has_point_entries.reserve(estimated_vertices);
+  _has_point_grid_index.reserve(estimated_vertices);
+
+  for (int i = 0; i < oring.size(); ++i) {
+    _has_point_entries.push_back({0, i, oring[i]});
+  }
+
+  int ringi = 1;
+  for (const Ring2& iring : irings) {
+    for (int i = 0; i < iring.size(); ++i) {
+      _has_point_entries.push_back({ringi, i, iring[i]});
+    }
+    ringi++;
+  }
+
+  for (std::size_t idx = 0; idx < _has_point_entries.size(); ++idx) {
+    const HasPointIndexEntry& v = _has_point_entries[idx];
+    int gx = get_grid_coord(v.point.x(), TOPODIST);
+    int gy = get_grid_coord(v.point.y(), TOPODIST);
+    _has_point_grid_index[make_grid_key(gx, gy)].push_back(idx);
   }
 }
 
