@@ -850,9 +850,7 @@ bool Map3d::threeDfy(bool stitching) {
     if (stitching == true) {
       std::clog << "=====  /ADJACENT FEATURES =====\n";
       stageStart = Clock::now();
-      for (auto& f : _lsFeatures) {
-        this->collect_adjacent_features(f);
-      }
+      this->collect_adjacent_features_shared_vertices();
       _perf.adjacent_collection_ms += duration_ms(stageStart);
       std::clog << "=====  ADJACENT FEATURES/ =====\n";
 
@@ -1340,6 +1338,75 @@ void Map3d::collect_adjacent_features(TopoFeature* f) {
         f->add_adjacent_feature(fadj);
         _perf.adjacency_true_hits++;
       }
+    }
+  }
+}
+
+void Map3d::collect_adjacent_features_shared_vertices() {
+  for (auto& f : _lsFeatures) {
+    f->get_adjacent_features()->clear();
+  }
+
+  std::unordered_map<Point2Key, std::vector<TopoFeature*>, Point2KeyHash> vertex_to_features;
+  std::size_t estimated_vertices = 0;
+  for (auto& f : _lsFeatures) {
+    Polygon2* poly = f->get_Polygon2();
+    estimated_vertices += poly->outer().size();
+    for (const Ring2& iring : poly->inners()) {
+      estimated_vertices += iring.size();
+    }
+  }
+  vertex_to_features.reserve(estimated_vertices);
+
+  for (auto& f : _lsFeatures) {
+    Polygon2* poly = f->get_Polygon2();
+    const Ring2& outer = poly->outer();
+    for (const Point2& p : outer) {
+      vertex_to_features[make_point2_key(p)].push_back(f);
+    }
+    for (const Ring2& iring : poly->inners()) {
+      for (const Point2& p : iring) {
+        vertex_to_features[make_point2_key(p)].push_back(f);
+      }
+    }
+  }
+
+  std::unordered_map<TopoFeature*, std::unordered_set<TopoFeature*> > adjacency_sets;
+  adjacency_sets.reserve(_lsFeatures.size());
+  for (auto& f : _lsFeatures) {
+    adjacency_sets.emplace(f, std::unordered_set<TopoFeature*>());
+  }
+
+  for (auto& kv : vertex_to_features) {
+    std::vector<TopoFeature*>& bucket = kv.second;
+    if (bucket.size() < 2) {
+      continue;
+    }
+
+    std::sort(bucket.begin(), bucket.end());
+    bucket.erase(std::unique(bucket.begin(), bucket.end()), bucket.end());
+    if (bucket.size() < 2) {
+      continue;
+    }
+
+    for (std::size_t i = 0; i + 1 < bucket.size(); ++i) {
+      for (std::size_t j = i + 1; j < bucket.size(); ++j) {
+        TopoFeature* a = bucket[i];
+        TopoFeature* b = bucket[j];
+        _perf.adjacency_candidates += 2;
+        bool inserted_ab = adjacency_sets[a].insert(b).second;
+        bool inserted_ba = adjacency_sets[b].insert(a).second;
+        if (inserted_ab && inserted_ba) {
+          _perf.adjacency_true_hits += 2;
+        }
+      }
+    }
+  }
+
+  for (auto& entry : adjacency_sets) {
+    TopoFeature* feature = entry.first;
+    for (TopoFeature* adj : entry.second) {
+      feature->add_adjacent_feature(adj);
     }
   }
 }

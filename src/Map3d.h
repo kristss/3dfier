@@ -226,6 +226,7 @@ private:
   void stitch_average(TopoFeature* f1, int ringi1, int pi1, TopoFeature* f2, int ringi2, int pi2);
   void stitch_bridges();
   void collect_adjacent_features(TopoFeature* f);
+  void collect_adjacent_features_shared_vertices();
 };
 
 #endif
