@@ -54,6 +54,13 @@ struct PerfStats {
   double points_ingest_rtree_query_ms = 0.0;
   double points_ingest_candidate_filter_ms = 0.0;
   double points_ingest_feature_insert_ms = 0.0;
+  double points_ingest_feature_insert_building_ms = 0.0;
+  double points_ingest_feature_insert_terrain_ms = 0.0;
+  double points_ingest_feature_insert_road_ms = 0.0;
+  double points_ingest_feature_insert_forest_ms = 0.0;
+  double points_ingest_feature_insert_water_ms = 0.0;
+  double points_ingest_feature_insert_bridge_ms = 0.0;
+  double points_ingest_feature_insert_separation_ms = 0.0;
   double point_in_polygon_ms = 0.0;
   double within_range_ms = 0.0;
   double assign_elevation_to_vertex_ms = 0.0;
@@ -75,6 +82,13 @@ struct PerfStats {
   std::uint64_t points_after_bounds = 0;
   std::uint64_t point_feature_candidates = 0;
   std::uint64_t accepted_inserts = 0;
+  std::uint64_t accepted_inserts_building = 0;
+  std::uint64_t accepted_inserts_terrain = 0;
+  std::uint64_t accepted_inserts_road = 0;
+  std::uint64_t accepted_inserts_forest = 0;
+  std::uint64_t accepted_inserts_water = 0;
+  std::uint64_t accepted_inserts_bridge = 0;
+  std::uint64_t accepted_inserts_separation = 0;
   std::uint64_t adjacency_candidates = 0;
   std::uint64_t adjacency_true_hits = 0;
 };

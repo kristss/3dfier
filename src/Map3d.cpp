@@ -780,8 +780,44 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   Point2 p(x, y);
   double z = laspt.get_z();
   for (const AcceptedCandidate& candidate : accepted) {
+    auto classInsertStart = Clock::now();
     candidate.feature->add_elevation_point(p, z, candidate.radius, c, candidate.within);
+    double classInsertMs = duration_ms(classInsertStart);
     _perf.accepted_inserts++;
+
+    TopoClass featureClass = candidate.feature->get_class();
+    switch (featureClass) {
+    case BUILDING:
+      _perf.accepted_inserts_building++;
+      _perf.points_ingest_feature_insert_building_ms += classInsertMs;
+      break;
+    case TERRAIN:
+      _perf.accepted_inserts_terrain++;
+      _perf.points_ingest_feature_insert_terrain_ms += classInsertMs;
+      break;
+    case ROAD:
+      _perf.accepted_inserts_road++;
+      _perf.points_ingest_feature_insert_road_ms += classInsertMs;
+      break;
+    case FOREST:
+      _perf.accepted_inserts_forest++;
+      _perf.points_ingest_feature_insert_forest_ms += classInsertMs;
+      break;
+    case WATER:
+      _perf.accepted_inserts_water++;
+      _perf.points_ingest_feature_insert_water_ms += classInsertMs;
+      break;
+    case BRIDGE:
+      _perf.accepted_inserts_bridge++;
+      _perf.points_ingest_feature_insert_bridge_ms += classInsertMs;
+      break;
+    case SEPARATION:
+      _perf.accepted_inserts_separation++;
+      _perf.points_ingest_feature_insert_separation_ms += classInsertMs;
+      break;
+    default:
+      break;
+    }
   }
   _perf.points_ingest_feature_insert_ms += duration_ms(insertStart);
 }

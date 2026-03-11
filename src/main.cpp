@@ -911,8 +911,12 @@ bool append_perf_csv(const std::string& filename, const std::string& config_path
 
   if (write_header) {
     out << "timestamp_utc,git_describe,config_path,"
-      << "polygons_read_ms,rtree_build_ms,points_ingest_ms,points_ingest_rtree_query_ms,points_ingest_candidate_filter_ms,points_ingest_feature_insert_ms,point_in_polygon_ms,within_range_ms,assign_elevation_to_vertex_ms,distance_to_boundaries_ms,lift_ms,adjacent_collection_ms,stitching_ms,bowties_ms,vertical_walls_ms,cdt_ms,output_write_ms,total_runtime_ms,"
-      << "polygon_count,las_files_count,las_points_total,points_after_thinning,points_after_omit,points_after_bounds,point_feature_candidates,accepted_inserts,adjacency_candidates,adjacency_true_hits\n";
+      << "polygons_read_ms,rtree_build_ms,points_ingest_ms,points_ingest_rtree_query_ms,points_ingest_candidate_filter_ms,points_ingest_feature_insert_ms,"
+      << "points_ingest_feature_insert_building_ms,points_ingest_feature_insert_terrain_ms,points_ingest_feature_insert_road_ms,points_ingest_feature_insert_forest_ms,points_ingest_feature_insert_water_ms,points_ingest_feature_insert_bridge_ms,points_ingest_feature_insert_separation_ms,"
+      << "point_in_polygon_ms,within_range_ms,assign_elevation_to_vertex_ms,distance_to_boundaries_ms,lift_ms,adjacent_collection_ms,stitching_ms,bowties_ms,vertical_walls_ms,cdt_ms,output_write_ms,total_runtime_ms,"
+      << "polygon_count,las_files_count,las_points_total,points_after_thinning,points_after_omit,points_after_bounds,point_feature_candidates,accepted_inserts,"
+      << "accepted_inserts_building,accepted_inserts_terrain,accepted_inserts_road,accepted_inserts_forest,accepted_inserts_water,accepted_inserts_bridge,accepted_inserts_separation,"
+      << "adjacency_candidates,adjacency_true_hits\n";
   }
 
   out << csv_escape(get_timestamp_utc()) << ","
@@ -925,6 +929,13 @@ bool append_perf_csv(const std::string& filename, const std::string& config_path
     << perf.points_ingest_rtree_query_ms << ","
     << perf.points_ingest_candidate_filter_ms << ","
     << perf.points_ingest_feature_insert_ms << ","
+    << perf.points_ingest_feature_insert_building_ms << ","
+    << perf.points_ingest_feature_insert_terrain_ms << ","
+    << perf.points_ingest_feature_insert_road_ms << ","
+    << perf.points_ingest_feature_insert_forest_ms << ","
+    << perf.points_ingest_feature_insert_water_ms << ","
+    << perf.points_ingest_feature_insert_bridge_ms << ","
+    << perf.points_ingest_feature_insert_separation_ms << ","
     << perf.point_in_polygon_ms << ","
     << perf.within_range_ms << ","
     << perf.assign_elevation_to_vertex_ms << ","
@@ -945,6 +956,13 @@ bool append_perf_csv(const std::string& filename, const std::string& config_path
     << perf.points_after_bounds << ","
     << perf.point_feature_candidates << ","
     << perf.accepted_inserts << ","
+    << perf.accepted_inserts_building << ","
+    << perf.accepted_inserts_terrain << ","
+    << perf.accepted_inserts_road << ","
+    << perf.accepted_inserts_forest << ","
+    << perf.accepted_inserts_water << ","
+    << perf.accepted_inserts_bridge << ","
+    << perf.accepted_inserts_separation << ","
     << perf.adjacency_candidates << ","
     << perf.adjacency_true_hits << "\n";
   return true;
