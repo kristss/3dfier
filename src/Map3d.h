@@ -41,6 +41,9 @@
 #include "Separation.h"
 #include "Bridge.h"
 #include "boost/locale.hpp"
+#include <array>
+#include <cstdint>
+#include <set>
 
 typedef std::pair<Box2, TopoFeature*> PairIndexed;
 
@@ -150,6 +153,9 @@ private:
   //-- storing the LAS allowed for each TopoFeature
   std::array<std::set<int>,NUM_ALLOWEDLASTOPO> _las_classes_allowed;
   std::array<std::set<int>,NUM_ALLOWEDLASTOPO> _las_classes_allowed_within;
+  std::array<std::array<std::uint8_t, 256>, NUM_ALLOWEDLASTOPO> _las_allowed_lut;
+  std::array<std::array<std::uint8_t, 256>, NUM_ALLOWEDLASTOPO> _las_within_lut;
+  std::array<std::uint8_t, NUM_ALLOWEDLASTOPO> _las_allowed_any;
 
   NodeColumn                                          _nc;
   NodeColumn                                          _nc_building_walls;

@@ -34,6 +34,7 @@
 
 #include "Map3d.h"
 #include <ogrsf_frmts.h>
+#include <algorithm>
 
 Map3d::Map3d() {
   OGRRegisterAll();
@@ -68,6 +69,11 @@ Map3d::Map3d() {
   _minyradius = -9999999;
   _maxyradius = -9999999;
   _max_angle_curvepolygon = 0;
+  for (std::size_t i = 0; i < NUM_ALLOWEDLASTOPO; ++i) {
+    _las_allowed_lut[i].fill(0);
+    _las_within_lut[i].fill(0);
+    _las_allowed_any[i] = 1;
+  }
 }
 
 Map3d::~Map3d() {
@@ -696,75 +702,69 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   querybox = Box2(minp, maxp);
   _rtree_buildings.query(bgi::intersects(querybox), std::back_inserter(re));
 
+  auto class_is_allowed = [&](AllowedLASTopo topoClass, int lasClass) {
+    if (lasClass >= 0 && lasClass < 256) {
+      return (_las_allowed_any[topoClass] != 0) || (_las_allowed_lut[topoClass][lasClass] != 0);
+    }
+    return _las_classes_allowed[topoClass].empty() || _las_classes_allowed[topoClass].count(lasClass) > 0;
+  };
+
+  auto class_is_within_allowed = [&](AllowedLASTopo topoClass, int lasClass) {
+    if (lasClass >= 0 && lasClass < 256) {
+      return _las_within_lut[topoClass][lasClass] != 0;
+    }
+    return _las_classes_allowed_within[topoClass].count(lasClass) > 0;
+  };
+
+  struct AcceptedCandidate {
+    TopoFeature* feature;
+    float radius;
+    bool within;
+  };
+  std::vector<AcceptedCandidate> accepted;
+  accepted.reserve(re.size());
+
+  int c = int(laspt.classification);
   for (auto& v : re) {
     TopoFeature* f = v.second;
     float radius = _radius_vertex_elevation;
-
-    int c = (int)laspt.classification;
     bool bInsert = false;
     bool bWithin = false;
     if (f->get_class() == BUILDING) {
       bInsert = true;
       radius = _building_radius_vertex_elevation;
     }
-    else if (f->get_class() == TERRAIN) {
-      if (_las_classes_allowed[LAS_TERRAIN].empty() || _las_classes_allowed[LAS_TERRAIN].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_TERRAIN].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
-      }
-    }
-    else if (f->get_class() == FOREST) {
-      if (_las_classes_allowed[LAS_FOREST].empty() || _las_classes_allowed[LAS_FOREST].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_FOREST].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
-      }
-    }
-    else if (f->get_class() == ROAD) {
-      if (_las_classes_allowed[LAS_ROAD].empty() || _las_classes_allowed[LAS_ROAD].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_ROAD].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
-      }
-    }
-    else if (f->get_class() == WATER) {
-      if (_las_classes_allowed[LAS_WATER].empty() || _las_classes_allowed[LAS_WATER].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_WATER].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
-      }
-    }
-    else if (f->get_class() == SEPARATION) {
-      if (_las_classes_allowed[LAS_SEPARATION].empty() || _las_classes_allowed[LAS_SEPARATION].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_SEPARATION].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
-      }
-    }
-    else if (f->get_class() == BRIDGE) {
-      if (_las_classes_allowed[LAS_BRIDGE].empty() || _las_classes_allowed[LAS_BRIDGE].count(c) > 0) {
-        bInsert = true;
-      }
-      if (_las_classes_allowed_within[LAS_BRIDGE].count(c) > 0) {
-        bInsert = true;
-        bWithin = true;
+    else {
+      AllowedLASTopo topoClass = NUM_ALLOWEDLASTOPO;
+      if (f->get_class() == TERRAIN)
+        topoClass = LAS_TERRAIN;
+      else if (f->get_class() == FOREST)
+        topoClass = LAS_FOREST;
+      else if (f->get_class() == ROAD)
+        topoClass = LAS_ROAD;
+      else if (f->get_class() == WATER)
+        topoClass = LAS_WATER;
+      else if (f->get_class() == SEPARATION)
+        topoClass = LAS_SEPARATION;
+      else if (f->get_class() == BRIDGE)
+        topoClass = LAS_BRIDGE;
+
+      if (topoClass != NUM_ALLOWEDLASTOPO) {
+        bInsert = class_is_allowed(topoClass, c);
+        bWithin = class_is_within_allowed(topoClass, c);
+        if (bWithin)
+          bInsert = true;
       }
     }
     if (bInsert == true) { //-- only insert if in the allowed LAS classes
-      Point2 p(x, y);
-      f->add_elevation_point(p, laspt.get_z(), radius, c, bWithin);
+      accepted.push_back({ f, radius, bWithin });
     }
+  }
+
+  Point2 p(x, y);
+  double z = laspt.get_z();
+  for (const AcceptedCandidate& candidate : accepted) {
+    candidate.feature->add_elevation_point(p, z, candidate.radius, c, candidate.within);
   }
 }
 
@@ -1174,14 +1174,17 @@ bool Map3d::add_las_file(PointFile pointFile) {
     LASheader header = lasreader->header;
 
     if (check_bounds(header.min_x, header.max_x, header.min_y, header.max_y)) {
-      //-- LAS classes to omit
-      std::vector<int> lasomits;
-      for (int i : pointFile.lasomits) {
-        lasomits.push_back(i);
+      std::array<std::uint8_t, 256> omit_class_lut;
+      omit_class_lut.fill(0);
+      for (int omitted_class : pointFile.lasomits) {
+        if (omitted_class >= 0 && omitted_class < 256) {
+          omit_class_lut[omitted_class] = 1;
+        }
       }
 
       //-- read each point 1-by-1
       uint32_t pointCount = header.number_of_point_records;
+      uint32_t progress_step = std::max<uint32_t>(1, pointCount / 100);
 
       std::clog << "\t(" << boost::locale::as::number << pointCount << " points in the file)\n";
       if ((pointFile.thinning > 1)) {
@@ -1204,14 +1207,15 @@ bool Map3d::add_las_file(PointFile pointFile) {
         //-- set the thinning filter
         if (i % pointFile.thinning == 0) {
           //-- set the classification filter
-          if (std::find(lasomits.begin(), lasomits.end(), (int)p.classification) == lasomits.end()) {
+          int classification = int(p.classification);
+          if ((classification < 0 || classification >= 256) || (omit_class_lut[classification] == 0)) {
             //-- set the bounds filter
             if (check_bounds(p.X, p.X, p.Y, p.Y)) {
               this->add_elevation_point(p);
             }
           }
         }
-        if (i % (pointCount / 100) == 0)
+        if (i % progress_step == 0)
           printProgressBar(100 * (i / double(pointCount)));
         i++;
       }
@@ -1237,8 +1241,20 @@ bool Map3d::add_las_file(PointFile pointFile) {
 void Map3d::collect_adjacent_features(TopoFeature* f) {
   std::vector<PairIndexed> re;
   Box2 b = f->get_bbox2d();
-  _rtree.query(bgi::satisfies([&](PairIndexed const& v) {return bg::distance(v.first, b) < TOPODIST; }), std::back_inserter(re));
-  _rtree_buildings.query(bgi::satisfies([&](PairIndexed const& v) {return bg::distance(v.first, b) < TOPODIST; }), std::back_inserter(re));
+  Box2 expanded_bbox(
+    Point2(bg::get<bg::min_corner, 0>(b) - TOPODIST, bg::get<bg::min_corner, 1>(b) - TOPODIST),
+    Point2(bg::get<bg::max_corner, 0>(b) + TOPODIST, bg::get<bg::max_corner, 1>(b) + TOPODIST));
+
+  std::vector<PairIndexed> rough_candidates;
+  _rtree.query(bgi::intersects(expanded_bbox), std::back_inserter(rough_candidates));
+  _rtree_buildings.query(bgi::intersects(expanded_bbox), std::back_inserter(rough_candidates));
+
+  for (auto& candidate : rough_candidates) {
+    if (bg::distance(candidate.first, b) < TOPODIST) {
+      re.push_back(candidate);
+    }
+  }
+
   for (auto& each : re) {
     TopoFeature* fadj = each.second;
     if (f != fadj && f->adjacent(*(fadj->get_Polygon2()))){
@@ -1877,8 +1893,15 @@ int Map3d::interpolate_height(TopoFeature* f, const Point2 &p, int prevringi, in
 
 void Map3d::add_allowed_las_class(AllowedLASTopo c, int i) {
   _las_classes_allowed[c].insert(i);
+  _las_allowed_any[c] = 0;
+  if (i >= 0 && i < 256) {
+    _las_allowed_lut[c][i] = 1;
+  }
 }
 
 void Map3d::add_allowed_las_class_within(AllowedLASTopo c, int i) {
   _las_classes_allowed_within[c].insert(i);
+  if (i >= 0 && i < 256) {
+    _las_within_lut[c][i] = 1;
+  }
 }
