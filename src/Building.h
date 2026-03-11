@@ -32,6 +32,7 @@
 #include "TopoFeature.h"
 #include "io.h"
 #include <algorithm>
+#include <array>
 
 class Building: public Flat {
 public:
@@ -69,6 +70,10 @@ private:
   static bool          _building_inner_walls;
   static std::set<int> _las_classes_roof;
   static std::set<int> _las_classes_ground;
+  static std::array<std::uint8_t, 256> _las_classes_roof_lut;
+  static std::array<std::uint8_t, 256> _las_classes_ground_lut;
+  static bool          _las_classes_roof_any;
+  static bool          _las_classes_ground_any;
 };
 
 #endif /* Building_h */

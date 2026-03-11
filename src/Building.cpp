@@ -36,6 +36,10 @@ bool Building::_building_include_floor;
 bool Building::_building_inner_walls;
 std::set<int> Building::_las_classes_roof;
 std::set<int> Building::_las_classes_ground;
+std::array<std::uint8_t, 256> Building::_las_classes_roof_lut = {};
+std::array<std::uint8_t, 256> Building::_las_classes_ground_lut = {};
+bool Building::_las_classes_roof_any = true;
+bool Building::_las_classes_ground_any = true;
 Building::Building(char *wkt, std::string layername, AttributeMap attributes, std::string pid, float heightref_top, float heightref_base, bool building_triangulate, bool building_include_floor, bool building_inner_walls)
   : Flat(wkt, layername, attributes, pid)
 {
@@ -49,11 +53,29 @@ Building::Building(char *wkt, std::string layername, AttributeMap attributes, st
 void Building::set_las_classes_roof(std::set<int> theset)
 {
   Building::_las_classes_roof = theset;
+  _las_classes_roof_lut.fill(0);
+  _las_classes_roof_any = theset.empty();
+  if (!_las_classes_roof_any) {
+    for (int c : theset) {
+      if (c >= 0 && c < 256) {
+        _las_classes_roof_lut[c] = 1;
+      }
+    }
+  }
 }
 
 void Building::set_las_classes_ground(std::set<int> theset)
 {
   Building::_las_classes_ground = theset;
+  _las_classes_ground_lut.fill(0);
+  _las_classes_ground_any = theset.empty();
+  if (!_las_classes_ground_any) {
+    for (int c : theset) {
+      if (c >= 0 && c < 256) {
+        _las_classes_ground_lut[c] = 1;
+      }
+    }
+  }
 }
 
 std::string Building::get_all_z_values() {
@@ -119,18 +141,55 @@ bool Building::lift() {
 }
 
 bool Building::add_elevation_point(Point2 &p, double z, float radius, int lasclass, bool within) {
-  // if within then a point must lay within the polygon, otherwise add
-  if (!within || (within && point_in_polygon(p))) {
-    if (within_range(p, radius)) {
-      int zcm = int(z * 100);
-      if ((_las_classes_roof.empty() == true) || (_las_classes_roof.count(lasclass) > 0)) {
-        _zvaluesinside.push_back(zcm);
-      }
-      if ((_las_classes_ground.empty() == true) || (_las_classes_ground.count(lasclass) > 0)) {
-        _zvaluesground.push_back(zcm);
-      }
+  bool roof_allowed = _las_classes_roof_any;
+  if (!roof_allowed) {
+    if (lasclass >= 0 && lasclass < 256) {
+      roof_allowed = _las_classes_roof_lut[lasclass] != 0;
+    }
+    else {
+      roof_allowed = _las_classes_roof.count(lasclass) > 0;
     }
   }
+
+  bool ground_allowed = _las_classes_ground_any;
+  if (!ground_allowed) {
+    if (lasclass >= 0 && lasclass < 256) {
+      ground_allowed = _las_classes_ground_lut[lasclass] != 0;
+    }
+    else {
+      ground_allowed = _las_classes_ground.count(lasclass) > 0;
+    }
+  }
+
+  if (!roof_allowed && !ground_allowed) {
+    return true;
+  }
+
+  bool inside = false;
+  if (within) {
+    inside = point_in_polygon(p);
+    if (!inside) {
+      return true;
+    }
+  }
+
+  bool accepted = inside;
+  if (!accepted) {
+    accepted = within_range(p, radius);
+  }
+  if (!accepted) {
+    return true;
+  }
+
+  int zcm = int(z * 100);
+  if (roof_allowed) {
+    _zvaluesinside.push_back(zcm);
+  }
+
+  if (ground_allowed) {
+    _zvaluesground.push_back(zcm);
+  }
+
   return true;
 }
 
