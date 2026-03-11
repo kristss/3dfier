@@ -1066,9 +1066,12 @@ void TopoFeature::build_edge_cache() {
   build_ring_cache(_p2->outer(), _outer_edge_cache);
   const std::vector<Ring2>& irings = _p2->inners();
   _inner_edge_caches.clear();
+  _inner_ring_bboxes.clear();
   _inner_edge_caches.resize(irings.size());
+  _inner_ring_bboxes.resize(irings.size());
   for (std::size_t i = 0; i < irings.size(); ++i) {
     build_ring_cache(irings[i], _inner_edge_caches[i]);
+    _inner_ring_bboxes[i] = bg::return_envelope<Box2>(irings[i]);
   }
 }
 
@@ -1294,7 +1297,15 @@ bool TopoFeature::point_in_polygon(const Point2& p) {
   bool insideOuter = point_in_ring_cache(_outer_edge_cache, p);
   if (insideOuter) {
     //test inner rings
-    for (const std::vector<RingEdgeCacheEntry>& inner_cache : _inner_edge_caches) {
+    for (std::size_t i = 0; i < _inner_edge_caches.size(); ++i) {
+      const Box2& inner_bbox = _inner_ring_bboxes[i];
+      if ((px < bg::get<bg::min_corner, 0>(inner_bbox)) ||
+          (px > bg::get<bg::max_corner, 0>(inner_bbox)) ||
+          (py < bg::get<bg::min_corner, 1>(inner_bbox)) ||
+          (py > bg::get<bg::max_corner, 1>(inner_bbox))) {
+        continue;
+      }
+      const std::vector<RingEdgeCacheEntry>& inner_cache = _inner_edge_caches[i];
       bool insideInner = point_in_ring_cache(inner_cache, p);
       if (insideInner) {
         if (sample) {
@@ -1723,7 +1734,13 @@ int TIN::get_number_vertices() {
 }
 
 bool TIN::add_elevation_point(Point2& p, double z, float radius, int lasclass, bool within) {
-  bool inside = point_in_polygon(p);
+  double px = p.x();
+  double py = p.y();
+  bool in_feature_bbox = !((px < bg::get<bg::min_corner, 0>(_bbox2d)) ||
+                           (px > bg::get<bg::max_corner, 0>(_bbox2d)) ||
+                           (py < bg::get<bg::min_corner, 1>(_bbox2d)) ||
+                           (py > bg::get<bg::max_corner, 1>(_bbox2d)));
+  bool inside = in_feature_bbox && point_in_polygon(p);
   bool toadd = false;
   // if within then a point must lay within the polygon, otherwise add
   if (!within || inside) {

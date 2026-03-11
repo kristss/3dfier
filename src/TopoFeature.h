@@ -137,6 +137,7 @@ protected:
   std::unordered_map<std::uint64_t, std::vector<std::size_t> > _has_point_grid_index;
   std::vector<RingEdgeCacheEntry>                         _outer_edge_cache;
   std::vector<std::vector<RingEdgeCacheEntry> >           _inner_edge_caches;
+  std::vector<Box2>                                        _inner_ring_bboxes;
   double                                                   _vertex_grid_cell_size = 0.0;
   bool                                                     _vertex_grid_ready = false;
 
