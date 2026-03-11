@@ -699,7 +699,8 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   if (laspt.return_number != laspt.number_of_returns)
     return;
 
-  std::vector<PairIndexed> re;
+  std::vector<PairIndexed>& re = _rtree_query_buf;
+  re.clear();
   auto queryStart = Clock::now();
   float x = laspt.get_x();
   float y = laspt.get_y();

@@ -486,7 +486,7 @@ void Building::get_stl(std::unordered_map< std::string, unsigned long > &dPts, i
         }
         //reverse orientation for floor polygon, a-c-b instead of a-b-c.
         if ((a != b) && (a != c) && (b != c)) {
-          stl_prep(_vertices[t.v0].second, _vertices[t.v2].second, _vertices[t.v1].second, fs);
+          stl_prep(_vertices[t.v0].first, _vertices[t.v2].first, _vertices[t.v1].first, fs);
         }
       }
     }
@@ -520,7 +520,7 @@ void Building::get_stl(std::unordered_map< std::string, unsigned long > &dPts, i
         c = it->second;
       }
       if ((a != b) && (a != c) && (b != c)) {
-        stl_prep(_vertices[t.v0].second, _vertices[t.v1].second, _vertices[t.v2].second, fs);
+        stl_prep(_vertices[t.v0].first, _vertices[t.v1].first, _vertices[t.v2].first, fs);
       }
     }
 

@@ -213,6 +213,7 @@ private:
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree;
   bgi::rtree< PairIndexed, bgi::rstar<16> >           _rtree_buildings;
   PerfStats                                           _perf;
+  std::vector<PairIndexed>                            _rtree_query_buf;
 
 #if GDAL_VERSION_MAJOR < 2
   bool extract_and_add_polygon(OGRDataSource* dataSource, PolygonFile* file);

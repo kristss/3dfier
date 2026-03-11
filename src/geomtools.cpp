@@ -39,6 +39,7 @@
 #include <CGAL/Triangulation_face_base_with_info_2.h>
 #include <CGAL/Polygon_2.h>
 
+#include <cstdio>
 #include <vector>
 #include <unordered_set>
 #include <boost/heap/fibonacci_heap.hpp>
@@ -222,21 +223,21 @@ bool getCDT(Polygon2* pgn,
 }
 
 std::string gen_key_bucket(const Point2* p) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>();
-  return ss.str();
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%.3f %.3f", p->get<0>(), p->get<1>());
+  return buf;
 }
 
 std::string gen_key_bucket(const Point3* p) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>() << " " << std::setprecision(2) << p->get<2>();
-  return ss.str();
+  char buf[96];
+  snprintf(buf, sizeof(buf), "%.3f %.3f %.2f", p->get<0>(), p->get<1>(), p->get<2>());
+  return buf;
 }
 
 std::string gen_key_bucket(const Point3* p, float z) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(3) << p->get<0>() << " " << p->get<1>() << " " << std::setprecision(2) << z;
-  return ss.str();
+  char buf[96];
+  snprintf(buf, sizeof(buf), "%.3f %.3f %.2f", p->get<0>(), p->get<1>(), z);
+  return buf;
 }
 
 double distance(const Point2 &p1, const Point2 &p2) {

@@ -35,6 +35,7 @@
 
 #include "TopoFeature.h"
 #include <cstddef>
+#include <cstdio>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -116,11 +117,11 @@ TopoFeaturePerfCounters TopoFeature::get_perf_counters() {
   return g_topofeature_perf;
 }
 
-std::string TopoFeature::get_id() {
+const std::string& TopoFeature::get_id() {
   return _id;
 }
 
-std::string  TopoFeature::get_layername() {
+const std::string&  TopoFeature::get_layername() {
   return _layername;
 }
 
@@ -296,7 +297,7 @@ void TopoFeature::get_stl(std::unordered_map< std::string, unsigned long > &dPts
       c = it->second;
 
     if ((a != b) && (a != c) && (b != c)) {
-      stl_prep(_vertices[t.v0].second, _vertices[t.v1].second, _vertices[t.v2].second, fs);
+      stl_prep(_vertices[t.v0].first, _vertices[t.v1].first, _vertices[t.v2].first, fs);
     }
   }
 
@@ -327,55 +328,43 @@ void TopoFeature::get_stl(std::unordered_map< std::string, unsigned long > &dPts
         c = it->second;
 
       if ((a != b) && (a != c) && (b != c)) {
-        stl_prep(_vertices_vw[t.v0].second, _vertices_vw[t.v1].second, _vertices_vw[t.v2].second, fs);
+        stl_prep(_vertices_vw[t.v0].first, _vertices_vw[t.v1].first, _vertices_vw[t.v2].first, fs);
       }
     }
   }
 }
 
 /* Access, calculate and output STL format for a feature */
-void TopoFeature::stl_prep(std::string pointsa, std::string pointsb, std::string pointsc, std::string &fs){
-    // take vertices that are written as string and turn them into float point vectors
-    std::vector<double> v1, v2, v3;
-    double num;
-    std::stringstream ss;
-
-    ss << pointsa;
-    while (ss >> num) v1.push_back(num);
-    ss.clear();
-
-    ss << pointsb;
-    while (ss >> num) v2.push_back(num);
-    ss.clear();
-
-    ss << pointsc;
-    while (ss >> num) v3.push_back(num);
-    ss.clear();
+void TopoFeature::stl_prep(const Point3& pa, const Point3& pb, const Point3& pc, std::string &fs){
+    double ax = pa.get<0>(), ay = pa.get<1>(), az = pa.get<2>();
+    double bx = pb.get<0>(), by = pb.get<1>(), bz = pb.get<2>();
+    double cx = pc.get<0>(), cy = pc.get<1>(), cz = pc.get<2>();
 
     // calculate face normals
-    double vecU[3], vecV[3];
+    double vecU[3] = { bx - ax, by - ay, bz - az };
+    double vecV[3] = { cx - ax, cy - ay, cz - az };
     double nVec[3];
-
-    for (int j = 0; j < 3; j++){
-      vecU[j] = v2[j] - v1[j];
-      vecV[j] = v3[j] - v1[j];
-    }
     nVec[0] = vecU[1]*vecV[2] - vecU[2]*vecV[1];
     nVec[1] = vecU[2]*vecV[0] - vecU[0]*vecV[2];
     nVec[2] = vecU[0]*vecV[1] - vecU[1]*vecV[0];
 
-    double nLen = sqrt(nVec[0]*nVec[0] + nVec[1]*nVec[1] + nVec[2]*nVec[2]); // normalize the normal
-    for (int j = 0; j < 3; j++)
-      nVec[j] /= nLen;
+    double nLen = sqrt(nVec[0]*nVec[0] + nVec[1]*nVec[1] + nVec[2]*nVec[2]);
+    if (nLen > 0) {
+      nVec[0] /= nLen; nVec[1] /= nLen; nVec[2] /= nLen;
+    }
 
-    // output feature
-    fs += "  facet normal "; fs += std::to_string(nVec[0]); fs += " "; fs += std::to_string(nVec[1]); fs+= " "; fs += std::to_string(nVec[2]); fs += "\n";
-    fs += "    outer loop"; fs += "\n";
-    fs += "      "; fs += "vertex "; fs += pointsa; fs += "\n";
-    fs += "      "; fs += "vertex "; fs += pointsb; fs += "\n";
-    fs += "      "; fs += "vertex "; fs += pointsc; fs += "\n";
-    fs += "    endloop"; fs += "\n";
-    fs += "  endfacet"; fs += "\n";
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+      "  facet normal %.6f %.6f %.6f\n    outer loop\n"
+      "      vertex %.3f %.3f %.2f\n"
+      "      vertex %.3f %.3f %.2f\n"
+      "      vertex %.3f %.3f %.2f\n"
+      "    endloop\n  endfacet\n",
+      nVec[0], nVec[1], nVec[2],
+      ax, ay, az,
+      bx, by, bz,
+      cx, cy, cz);
+    fs += buf;
 }
 
 AttributeMap &TopoFeature::get_attributes() {
@@ -967,8 +956,7 @@ bool TopoFeature::has_point2(const Point2& p, std::vector<int>& ringis, std::vec
   int gx = get_grid_coord(p.x(), TOPODIST);
   int gy = get_grid_coord(p.y(), TOPODIST);
   int ring_count = int(_p2->inners().size()) + 1;
-  _has_point_min_pi_scratch.resize(ring_count, -1);
-  std::fill(_has_point_min_pi_scratch.begin(), _has_point_min_pi_scratch.end(), -1);
+  _has_point_min_pi_scratch.assign(ring_count, -1);
 
   for (int dx = -1; dx <= 1; ++dx) {
     for (int dy = -1; dy <= 1; ++dy) {
@@ -1032,11 +1020,7 @@ Point2 TopoFeature::get_point2(int ringi, int pi) {
  * return first vertex of ring when last vertex is supplied
  */
 Point2 TopoFeature::get_next_point2_in_ring(int ringi, int i, int& pi) {
-  Ring2 ring;
-  if (ringi == 0)
-    ring = _p2->outer();
-  else
-    ring = _p2->inners()[ringi - 1];
+  const Ring2& ring = (ringi == 0) ? _p2->outer() : _p2->inners()[ringi - 1];
 
   if (i == (ring.size() - 1)) {
     pi = 0;

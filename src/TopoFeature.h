@@ -63,14 +63,14 @@ public:
   virtual bool          get_shape(OGRLayer*, bool writeAttributes, const AttributeMap& extraAttributes = AttributeMap()) = 0;
   virtual void          cleanup_elevations() = 0;
 
-  std::string  get_id();
+  const std::string&  get_id();
   void         construct_vertical_walls(const NodeColumn& nc);
   void         fix_bowtie();
   void         add_adjacent_feature(TopoFeature* adjFeature);
   std::vector<TopoFeature*>* get_adjacent_features();
   Polygon2*    get_Polygon2();
   Box2         get_bbox2d();
-  std::string  get_layername();
+  const std::string&  get_layername();
   Point2       get_point2(int ringi, int pi);
   bool         has_point2(const Point2& p);
   bool         has_point2(const Point2& p, std::vector<int>& ringis, std::vector<int>& pis);
@@ -88,7 +88,7 @@ public:
   bool         writeAttribute(OGRFeature* feature, OGRFeatureDefn* featureDefn, std::string name, std::string value);
   void         get_obj(std::unordered_map< std::string, unsigned long >& dPts, std::string mtl, std::string& fs);
   void         get_stl(std::unordered_map< std::string, unsigned long >& dPts,std::string& fs);
-  void         stl_prep(std::string pointsa, std::string pointsb, std::string pointsc, std::string &fs);
+  void         stl_prep(const Point3& pa, const Point3& pb, const Point3& pc, std::string& fs);
   AttributeMap& get_attributes();
   void         get_imgeo_attributes(std::wostream& of, std::string id);
   void         get_citygml_attributes(std::wostream& of, const AttributeMap& attributes);
