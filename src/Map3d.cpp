@@ -36,6 +36,7 @@
 #include <ogrsf_frmts.h>
 #include <algorithm>
 #include <chrono>
+#include <unordered_set>
 
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -1350,7 +1351,39 @@ void Map3d::collect_adjacent_features(TopoFeature* f) {
  * not have gaps and height jumps
  */ 
 void Map3d::stitch_lifted_features() {
-  std::vector<int> ringis, pis;
+  struct StitchVertexRef {
+    TopoFeature* feature;
+    int ringi;
+    int pi;
+  };
+
+  std::unordered_map<Point2Key, std::vector<StitchVertexRef>, Point2KeyHash> vertex_index;
+  std::size_t estimated_vertices = 0;
+  for (auto& f : _lsFeatures) {
+    Polygon2* poly = f->get_Polygon2();
+    estimated_vertices += poly->outer().size();
+    for (const Ring2& iring : poly->inners()) {
+      estimated_vertices += iring.size();
+    }
+  }
+  vertex_index.reserve(estimated_vertices);
+
+  for (auto& f : _lsFeatures) {
+    Polygon2* poly = f->get_Polygon2();
+    int ringi = 0;
+    const Ring2& outer = poly->outer();
+    for (int pi = 0; pi < outer.size(); ++pi) {
+      vertex_index[make_point2_key(outer[pi])].push_back({ f, ringi, pi });
+    }
+    ringi = 1;
+    for (const Ring2& iring : poly->inners()) {
+      for (int pi = 0; pi < iring.size(); ++pi) {
+        vertex_index[make_point2_key(iring[pi])].push_back({ f, ringi, pi });
+      }
+      ringi++;
+    }
+  }
+
   for (auto& f : _lsFeatures) {
     if (f->get_class() != BRIDGE) {
       Polygon2* poly = f->get_Polygon2();
@@ -1361,6 +1394,11 @@ void Map3d::stitch_lifted_features() {
         rings.push_back(&iring);
       }
       std::vector<TopoFeature*>* lstouching = f->get_adjacent_features();
+      std::unordered_set<TopoFeature*> touching_set;
+      touching_set.reserve(lstouching->size());
+      for (TopoFeature* touching : *lstouching) {
+        touching_set.insert(touching);
+      }
       Building* building = (f->get_class() == BUILDING) ? dynamic_cast<Building*>(f) : nullptr;
 
       int ringi = -1;
@@ -1370,15 +1408,15 @@ void Map3d::stitch_lifted_features() {
         //-- 2. build the node-column for each vertex
         for (int i = 0; i < ring.size(); i++) {
           std::vector< std::tuple<TopoFeature*, int, int> > star;
-          star.reserve(lstouching->size());
           bool toprocess = false;
-          for (auto& fadj : *lstouching) {
-            ringis.clear();
-            pis.clear();
-            if (fadj->has_point2(ring[i], ringis, pis) == true) {
-              for (int k = 0; k < ringis.size(); k++) {
+          auto vit = vertex_index.find(make_point2_key(ring[i]));
+          if (vit != vertex_index.end()) {
+            const std::vector<StitchVertexRef>& refs = vit->second;
+            star.reserve(refs.size());
+            for (const StitchVertexRef& ref : refs) {
+              if (ref.feature != f && touching_set.find(ref.feature) != touching_set.end()) {
                 toprocess = true;
-                star.push_back(std::make_tuple(fadj, ringis[k], pis[k]));
+                star.push_back(std::make_tuple(ref.feature, ref.ringi, ref.pi));
               }
             }
           }
