@@ -34,8 +34,10 @@ find_package( yaml-cpp REQUIRED )
 # CGAL
 find_package( CGAL REQUIRED QUIET COMPONENTS )
 
-# include helper file
-include( ${CGAL_USE_FILE} )
+# include helper file (not provided by CGAL ≥ 6)
+if(CGAL_USE_FILE)
+  include( ${CGAL_USE_FILE} )
+endif()
 
 if(MSVC)
   add_definitions(-DNOMINMAX)
@@ -44,7 +46,10 @@ endif()
 
 include_directories( ${CMAKE_SOURCE_DIR}/thirdparty )
 
-include_directories( ${CGAL_INCLUDE_DIR} ${CGAL_3RD_PARTY_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${YAML_CPP_INCLUDE_DIR} ${GDAL_INCLUDE_DIR})
+include_directories( ${Boost_INCLUDE_DIRS} ${YAML_CPP_INCLUDE_DIR} ${GDAL_INCLUDE_DIR})
+if(CGAL_INCLUDE_DIR)
+  include_directories( ${CGAL_INCLUDE_DIR} ${CGAL_3RD_PARTY_INCLUDE_DIR} )
+endif()
 
 # # build ptinpoly as static lib
 # add_library(ptinpoly STATIC thirdparty/ptinpoly.c)
@@ -61,7 +66,7 @@ set_target_properties(
   PROPERTIES CXX_STANDARD 11
 )
 
-target_link_libraries( 3dfier ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} ${GDAL_LIBRARY} yaml-cpp Boost::program_options Boost::filesystem Boost::locale Boost::chrono LASlib)
+target_link_libraries( 3dfier CGAL::CGAL ${GDAL_LIBRARY} yaml-cpp Boost::program_options Boost::filesystem Boost::locale Boost::chrono LASlib)
 
 target_compile_options(3dfier PRIVATE
   $<$<AND:$<CONFIG:RelWithDebInfo>,$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>>:-O${THREEDFIER_DEV_OPT_LEVEL}>
