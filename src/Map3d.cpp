@@ -193,11 +193,11 @@ Box2 Map3d::get_bbox() {
 }
 
 bool Map3d::check_bounds(const double xmin, const double xmax, const double ymin, const double ymax) {
-  if ((xmin < _maxxradius || xmax > _minxradius) &&
-    (ymin < _maxyradius || ymax > _minyradius)) {
-    return true;
-  }
-  return false;
+  //-- interval overlap between [xmin,xmax]x[ymin,ymax] and the radius-expanded model bbox
+  return xmax >= _minxradius &&
+    xmin <= _maxxradius &&
+    ymax >= _minyradius &&
+    ymin <= _maxyradius;
 }
 
 bool Map3d::get_cityjson(std::wostream& of) {
@@ -687,9 +687,16 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   //-- only process last returns; 
   //-- although perhaps not smart for vegetation/forest in the future
   //-- TODO: always ignore the non-last-return points?
-  if (laspt.return_number != laspt.number_of_returns)
+  if (laspt.return_number != laspt.number_of_returns) {
+    _pfc.skipped_not_last_return++;
     return;
-
+  }
+  //-- global class filter, in case this is reached from another caller than
+  //-- the read loop (which already applies it before the bounds check)
+  if (global_las_class_is_rejected(int(laspt.classification))) {
+    _pfc.rejected_global_class++;
+    return;
+  }
   std::vector<PairIndexed> re;
   float x = laspt.get_x();
   float y = laspt.get_y();
@@ -697,10 +704,13 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
   Point2 maxp(x + _radius_vertex_elevation, y + _radius_vertex_elevation);
   Box2 querybox(minp, maxp);
   _rtree.query(bgi::intersects(querybox), std::back_inserter(re));
+  _pfc.rtree_queries++;
   minp = Point2(x - _building_radius_vertex_elevation, y - _building_radius_vertex_elevation);
   maxp = Point2(x + _building_radius_vertex_elevation, y + _building_radius_vertex_elevation);
   querybox = Box2(minp, maxp);
   _rtree_buildings.query(bgi::intersects(querybox), std::back_inserter(re));
+  _pfc.rtree_queries++;
+  _pfc.rtree_candidates += re.size();
 
   auto class_is_allowed = [&](AllowedLASTopo topoClass, int lasClass) {
     if (lasClass >= 0 && lasClass < 256) {
@@ -761,10 +771,53 @@ void Map3d::add_elevation_point(LASpoint const& laspt) {
     }
   }
 
+  _pfc.candidates_accepted += accepted.size();
+
   Point2 p(x, y);
   double z = laspt.get_z();
+  //-- a feature can still reject the point (distance, point-in-polygon, its own
+  //-- class rules), so "attached" is counted from what the features accepted.
+  bool attached = false;
   for (const AcceptedCandidate& candidate : accepted) {
-    candidate.feature->add_elevation_point(p, z, candidate.radius, c, candidate.within);
+    if (candidate.feature->add_elevation_point(p, z, candidate.radius, c, candidate.within)) {
+      _pfc.feature_attachments++;
+      attached = true;
+    }
+  }
+  if (attached)
+    _pfc.points_attached++;
+}
+
+const PointFlowCounters& Map3d::get_point_flow_counters() const {
+  return _pfc;
+}
+
+/**
+ * report the point flow from file to feature
+ * one machine-readable "[point_flow] <key> <value>" line per counter,
+ * mirroring the "[timing_ms]" lines emitted by main.cpp
+ */
+void Map3d::print_point_flow_counters() const {
+  const std::pair<const char*, unsigned long long> rows[] = {
+    { "files_seen",              (unsigned long long)_pfc.files_seen },
+    { "files_skipped_bounds",    (unsigned long long)_pfc.files_skipped_bounds },
+    { "points_in_headers",       (unsigned long long)_pfc.points_in_headers },
+    { "points_in_skipped_files", (unsigned long long)_pfc.points_in_skipped_files },
+    { "points_read",             (unsigned long long)_pfc.points_read },
+    { "thinned_out",             (unsigned long long)_pfc.thinned_out },
+    { "rejected_omit_class",     (unsigned long long)_pfc.rejected_omit_class },
+    { "rejected_bounds",         (unsigned long long)_pfc.rejected_bounds },
+    { "reaching_rtree",          (unsigned long long)_pfc.reaching_rtree },
+    { "skipped_not_last_return", (unsigned long long)_pfc.skipped_not_last_return },
+    { "rejected_global_class",   (unsigned long long)_pfc.rejected_global_class },
+    { "rtree_queries",           (unsigned long long)_pfc.rtree_queries },
+    { "rtree_candidates",        (unsigned long long)_pfc.rtree_candidates },
+    { "candidates_accepted",     (unsigned long long)_pfc.candidates_accepted },
+    { "feature_attachments",     (unsigned long long)_pfc.feature_attachments },
+    { "points_attached",         (unsigned long long)_pfc.points_attached },
+  };
+  for (const auto& row : rows) {
+    printf("\t[point_flow] %s %llu\n", row.first, row.second);
   }
 }
 
@@ -883,18 +936,41 @@ bool Map3d::construct_rtree() {
   }
   std::clog << " done.\n";
 
-  //-- update the bounding box from _rtree and _rtree_buildings 
-  _bbox = Box2(
-    Point2(std::min(bg::get<bg::min_corner, 0>(_rtree.bounds()), bg::get<bg::min_corner, 0>(_rtree_buildings.bounds())),
-      std::min(bg::get<bg::min_corner, 1>(_rtree.bounds()), bg::get<bg::min_corner, 1>(_rtree_buildings.bounds()))),
-    Point2(std::max(bg::get<bg::max_corner, 0>(_rtree.bounds()), bg::get<bg::max_corner, 0>(_rtree_buildings.bounds())),
-      std::max(bg::get<bg::max_corner, 1>(_rtree.bounds()), bg::get<bg::max_corner, 1>(_rtree_buildings.bounds()))));
-  
+  //-- update the bounding box from _rtree and _rtree_buildings.
+  //-- Either tree may be empty; an empty boost rtree has a degenerate bounds()
+  //-- that must not be folded into the min/max, otherwise the model bbox and
+  //-- the radius-expanded filter bounds are corrupted.
+  const bool has_nonbuilding = _rtree.size() > 0;
+  const bool has_building = _rtree_buildings.size() > 0;
+
+  if (!has_nonbuilding && !has_building) {
+    _bbox = Box2(Point2(0, 0), Point2(0, 0));
+    _minxradius = _maxxradius = _minyradius = _maxyradius = 0;
+    return true;
+  }
+
+  double min_x, min_y, max_x, max_y;
+  if (has_nonbuilding && has_building) {
+    min_x = std::min(bg::get<bg::min_corner, 0>(_rtree.bounds()), bg::get<bg::min_corner, 0>(_rtree_buildings.bounds()));
+    min_y = std::min(bg::get<bg::min_corner, 1>(_rtree.bounds()), bg::get<bg::min_corner, 1>(_rtree_buildings.bounds()));
+    max_x = std::max(bg::get<bg::max_corner, 0>(_rtree.bounds()), bg::get<bg::max_corner, 0>(_rtree_buildings.bounds()));
+    max_y = std::max(bg::get<bg::max_corner, 1>(_rtree.bounds()), bg::get<bg::max_corner, 1>(_rtree_buildings.bounds()));
+  }
+  else {
+    const auto& b = has_nonbuilding ? _rtree.bounds() : _rtree_buildings.bounds();
+    min_x = bg::get<bg::min_corner, 0>(b);
+    min_y = bg::get<bg::min_corner, 1>(b);
+    max_x = bg::get<bg::max_corner, 0>(b);
+    max_y = bg::get<bg::max_corner, 1>(b);
+  }
+
+  _bbox = Box2(Point2(min_x, min_y), Point2(max_x, max_y));
+
   double radius = std::max(_radius_vertex_elevation, _building_radius_vertex_elevation);
-  _minxradius = std::min(bg::get<bg::min_corner, 0>(_rtree.bounds()), bg::get<bg::min_corner, 0>(_rtree_buildings.bounds())) - radius;
-  _maxxradius = std::min(bg::get<bg::min_corner, 1>(_rtree.bounds()), bg::get<bg::min_corner, 1>(_rtree_buildings.bounds())) + radius;
-  _minyradius = std::max(bg::get<bg::max_corner, 0>(_rtree.bounds()), bg::get<bg::max_corner, 0>(_rtree_buildings.bounds())) - radius;
-  _maxyradius = std::max(bg::get<bg::max_corner, 1>(_rtree.bounds()), bg::get<bg::max_corner, 1>(_rtree_buildings.bounds())) + radius;
+  _minxradius = min_x - radius;
+  _maxxradius = max_x + radius;
+  _minyradius = min_y - radius;
+  _maxyradius = max_y + radius;
   return true;
 }
 
@@ -1158,6 +1234,14 @@ void Map3d::extract_feature(OGRFeature *f, std::string layername, const char *id
  */
 bool Map3d::add_las_file(PointFile pointFile) {
   std::clog << "Reading LAS/LAZ file: " << pointFile.filename << std::endl;
+  //-- derived from the lifting configuration, which is fully parsed by now
+  rebuild_global_las_filter();
+  if (_las_allowed_global_any == false) {
+    std::clog << "\t(global allowed LAS classes: ";
+    for (int c = 0; c < 256; c++)
+      if (_las_allowed_global_lut[c] != 0) std::clog << std::to_string(c) << " ";
+    std::clog << ")\n";
+  }
 
   LASreadOpener lasreadopener;
   lasreadopener.set_file_name(pointFile.filename.c_str());
@@ -1172,6 +1256,8 @@ bool Map3d::add_las_file(PointFile pointFile) {
       return false;
     }
     LASheader header = lasreader->header;
+    _pfc.files_seen++;
+    _pfc.points_in_headers += header.number_of_point_records;
 
     if (check_bounds(header.min_x, header.max_x, header.min_y, header.max_y)) {
       std::array<std::uint8_t, 256> omit_class_lut;
@@ -1204,16 +1290,31 @@ bool Map3d::add_las_file(PointFile pointFile) {
       int i = 0;
       while (lasreader->read_point()) {
         LASpoint const& p = lasreader->point;
+        _pfc.points_read++;
         //-- set the thinning filter
         if (i % pointFile.thinning == 0) {
           //-- set the classification filter
           int classification = int(p.classification);
           if ((classification < 0 || classification >= 256) || (omit_class_lut[classification] == 0)) {
+            //-- global class filter: no feature type could use this class
+            if (global_las_class_is_rejected(classification)) {
+              _pfc.rejected_global_class++;
+            }
             //-- set the bounds filter
-            if (check_bounds(p.X, p.X, p.Y, p.Y)) {
+            else if (check_bounds(p.get_x(), p.get_x(), p.get_y(), p.get_y())) {
+              _pfc.reaching_rtree++;
               this->add_elevation_point(p);
             }
+            else {
+              _pfc.rejected_bounds++;
+            }
           }
+          else {
+            _pfc.rejected_omit_class++;
+          }
+        }
+        else {
+          _pfc.thinned_out++;
         }
         if (i % progress_step == 0)
           printProgressBar(100 * (i / double(pointCount)));
@@ -1223,6 +1324,8 @@ bool Map3d::add_las_file(PointFile pointFile) {
       std::clog << std::endl;
     }
     else {
+      _pfc.files_skipped_bounds++;
+      _pfc.points_in_skipped_files += header.number_of_point_records;
       std::clog << "\tskipping file, bounds do not intersect polygon extent\n";
     }
     lasreader->close();
@@ -1889,6 +1992,43 @@ int Map3d::interpolate_height(TopoFeature* f, const Point2 &p, int prevringi, in
   double dnext = distance(p, f->get_point2(nextringi, nextpi));
   double dtotal = dprev + dnext;
   return int((dnext / dtotal) * f->get_vertex_elevation(prevringi, prevpi) + (dprev / dtotal) * f->get_vertex_elevation(nextringi, nextpi));
+}
+
+/**
+ * build the union of LAS classes any feature type could accept
+ *
+ * Applied before the R-tree queries so points no feature could ever use are
+ * dropped early. The union is deliberately conservative: if any configured
+ * feature type accepts every class (an empty allowed-set, which 3dfier reads
+ * as allow-all), the global filter allows everything. It is derived from the
+ * lifting configuration only, never hardcoded.
+ */
+void Map3d::rebuild_global_las_filter() {
+  _las_allowed_global_lut.fill(0);
+  _las_allowed_global_any = false;
+
+  //-- buildings take any class as an R-tree candidate, but Building itself
+  //-- keeps only its roof/ground classes.
+  if (Building::las_classes_roof_any() || Building::las_classes_ground_any()) {
+    _las_allowed_global_any = true;
+    return;
+  }
+  for (int c : Building::get_las_classes_roof())
+    if (c >= 0 && c < 256) _las_allowed_global_lut[c] = 1;
+  for (int c : Building::get_las_classes_ground())
+    if (c >= 0 && c < 256) _las_allowed_global_lut[c] = 1;
+
+  for (int t = 0; t < NUM_ALLOWEDLASTOPO; t++) {
+    if (_las_allowed_any[t] != 0) {
+      //-- this feature type accepts everything
+      _las_allowed_global_any = true;
+      return;
+    }
+    for (int c : _las_classes_allowed[t])
+      if (c >= 0 && c < 256) _las_allowed_global_lut[c] = 1;
+    for (int c : _las_classes_allowed_within[t])
+      if (c >= 0 && c < 256) _las_allowed_global_lut[c] = 1;
+  }
 }
 
 void Map3d::add_allowed_las_class(AllowedLASTopo c, int i) {

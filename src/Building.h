@@ -60,6 +60,10 @@ public:
 
   static void   set_las_classes_roof(std::set<int> theset);
   static void   set_las_classes_ground(std::set<int> theset);
+  static const std::set<int>& get_las_classes_roof() { return _las_classes_roof; }
+  static const std::set<int>& get_las_classes_ground() { return _las_classes_ground; }
+  static bool   las_classes_roof_any() { return _las_classes_roof_any; }
+  static bool   las_classes_ground_any() { return _las_classes_ground_any; }
 private:
   std::vector<int>     _zvaluesground;
   int                  _height_base;

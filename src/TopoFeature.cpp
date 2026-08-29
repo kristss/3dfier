@@ -1097,10 +1097,11 @@ bool TopoFeature::has_vertex_within_distance(const Point2& p, double radius, dou
   return false;
 }
 
-void TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius) {
+bool TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius) {
   ensure_vertex_grid(radius);
   if (_vertex_index_entries.empty())
-    return;
+    return false;
+  bool assigned = false;
   double px = p.x();
   double py = p.y();
 
@@ -1120,11 +1121,13 @@ void TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, d
           double ddy = py - vy;
           if ((ddx * ddx + ddy * ddy) <= sqr_radius) {
             _lidarelevs[vertex.ringi][vertex.pi].push_back(zcm);
+            assigned = true;
           }
         }
       }
     }
   }
+  return assigned;
 }
 
 /**
@@ -1136,8 +1139,7 @@ void TopoFeature::assign_to_vertices_within_distance(const Point2& p, int zcm, d
 bool TopoFeature::assign_elevation_to_vertex(const Point2& p, double z, float radius) {
   double sqr_radius = radius * radius;
   int zcm = int(z * 100);
-  assign_to_vertices_within_distance(p, zcm, radius, sqr_radius);
-  return true;
+  return assign_to_vertices_within_distance(p, zcm, radius, sqr_radius);
 }
 
 /**
@@ -1407,7 +1409,8 @@ bool Flat::add_elevation_point(Point2& p, double z, float radius, int lasclass, 
     //-- 1. assign to polygon since within the threshold value (buffering of polygon)
     _zvaluesinside.push_back(zcm);
   }
-  return true;
+  //-- the return value reports whether this feature stored the point
+  return accepted;
 }
 
 int Flat::get_height() {
@@ -1451,9 +1454,9 @@ bool Boundary3D::add_elevation_point(Point2& p, double z, float radius, int lasc
   }
   // if within then a point must lay within the polygon, otherwise add
   if (!within || inside) {
-    assign_elevation_to_vertex(p, z, radius);
+    return assign_elevation_to_vertex(p, z, radius);
   }
-  return true;
+  return false;
 }
 
 // Old code that is not used anymore. It is replaced by detect_outliers
@@ -1598,9 +1601,10 @@ int TIN::get_number_vertices() {
 bool TIN::add_elevation_point(Point2& p, double z, float radius, int lasclass, bool within) {
   bool inside = point_in_polygon(p);
   bool toadd = false;
+  bool stored = false;
   // if within then a point must lay within the polygon, otherwise add
   if (!within || inside) {
-    assign_elevation_to_vertex(p, z, radius);
+    stored = assign_elevation_to_vertex(p, z, radius);
   }
   if (_simplification <= 1)
     toadd = true;
@@ -1611,8 +1615,10 @@ bool TIN::add_elevation_point(Point2& p, double z, float radius, int lasclass, b
   // Add the point to the lidar points if it is within the polygon and respecting the inner buffer size
   if (toadd && inside && (_innerbuffer == 0.0 || this->get_distance_to_boundaries(p) > _innerbuffer)) {
     _lidarpts.push_back(Point3(p.x(), p.y(), z));
+    stored = true;
   }
-  return toadd;
+  //-- the return value reports whether this feature stored the point
+  return stored;
 }
 
 void TIN::cleanup_elevations() {

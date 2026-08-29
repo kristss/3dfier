@@ -162,14 +162,14 @@ bool Building::add_elevation_point(Point2 &p, double z, float radius, int lascla
   }
 
   if (!roof_allowed && !ground_allowed) {
-    return true;
+    return false;
   }
 
   bool inside = false;
   if (within) {
     inside = point_in_polygon(p);
     if (!inside) {
-      return true;
+      return false;
     }
   }
 
@@ -178,7 +178,7 @@ bool Building::add_elevation_point(Point2 &p, double z, float radius, int lascla
     accepted = within_range(p, radius);
   }
   if (!accepted) {
-    return true;
+    return false;
   }
 
   int zcm = int(z * 100);
@@ -190,6 +190,7 @@ bool Building::add_elevation_point(Point2 &p, double z, float radius, int lascla
     _zvaluesground.push_back(zcm);
   }
 
+  //-- the return value reports whether this feature stored the point
   return true;
 }
 

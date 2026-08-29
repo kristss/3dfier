@@ -130,7 +130,7 @@ protected:
   bool    point_in_polygon(const Point2& p);
   void    ensure_vertex_grid(double query_radius);
   bool    has_vertex_within_distance(const Point2& p, double radius, double sqr_radius);
-  void    assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius);
+  bool    assign_to_vertices_within_distance(const Point2& p, int zcm, double radius, double sqr_radius);
   void    build_edge_cache();
   bool    point_in_ring_cache(const std::vector<RingEdgeCacheEntry>& edge_cache, const Point2& p);
   void    lift_each_boundary_vertices(float percentile);

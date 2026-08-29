@@ -47,6 +47,27 @@
 
 typedef std::pair<Box2, TopoFeature*> PairIndexed;
 
+//-- point-flow counters (Phase 5.1): every field is an O(1) update per
+//-- point or per file, so they are compiled into normal builds.
+struct PointFlowCounters {
+  std::uint64_t files_seen = 0;
+  std::uint64_t files_skipped_bounds = 0;
+  std::uint64_t points_in_headers = 0;
+  std::uint64_t points_in_skipped_files = 0;
+  std::uint64_t points_read = 0;
+  std::uint64_t thinned_out = 0;
+  std::uint64_t rejected_omit_class = 0;
+  std::uint64_t rejected_bounds = 0;
+  std::uint64_t reaching_rtree = 0;
+  std::uint64_t skipped_not_last_return = 0;
+  std::uint64_t rejected_global_class = 0;
+  std::uint64_t rtree_queries = 0;          //-- two per point: terrain + buildings
+  std::uint64_t rtree_candidates = 0;
+  std::uint64_t candidates_accepted = 0;    //-- passed the per-feature class test
+  std::uint64_t feature_attachments = 0;    //-- (point, feature) pairs actually stored
+  std::uint64_t points_attached = 0;        //-- points stored by at least one feature
+};
+
 class Map3d {
 public:
   Map3d();
@@ -61,6 +82,9 @@ public:
   bool construct_CDT();
   void add_elevation_point(LASpoint const& laspt);
   void cleanup_elevations();
+
+  const PointFlowCounters& get_point_flow_counters() const;
+  void print_point_flow_counters() const;
 
   unsigned long get_num_polygons();
   const std::vector<TopoFeature*>&  get_polygons3d();
@@ -156,6 +180,21 @@ private:
   std::array<std::array<std::uint8_t, 256>, NUM_ALLOWEDLASTOPO> _las_allowed_lut;
   std::array<std::array<std::uint8_t, 256>, NUM_ALLOWEDLASTOPO> _las_within_lut;
   std::array<std::uint8_t, NUM_ALLOWEDLASTOPO> _las_allowed_any;
+
+  //-- union of every class any feature type could accept, applied before the
+  //-- R-tree queries. Allow-all whenever any active configuration is allow-all.
+  std::array<std::uint8_t, 256> _las_allowed_global_lut;
+  bool _las_allowed_global_any = true;
+  void rebuild_global_las_filter();
+  inline bool global_las_class_is_rejected(int lasclass) const {
+    if (_las_allowed_global_any)
+      return false;
+    if (lasclass < 0 || lasclass >= 256)
+      return true;
+    return _las_allowed_global_lut[lasclass] == 0;
+  }
+
+  PointFlowCounters _pfc;
 
   NodeColumn                                          _nc;
   NodeColumn                                          _nc_building_walls;

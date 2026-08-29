@@ -41,7 +41,7 @@ std::string VERSION = "1.4.0";
 bool validate_yaml(const char* arg, std::set<std::string>& allowedFeatures);
 int main(int argc, const char * argv[]);
 std::string print_license();
-void print_duration(std::string message, boost::chrono::time_point<boost::chrono::steady_clock> startTime);
+void print_duration(std::string message, boost::chrono::time_point<boost::chrono::steady_clock> startTime, const char* label = "phase");
 
 int main(int argc, const char * argv[]) {
   auto startTime = boost::chrono::high_resolution_clock::now();
@@ -610,7 +610,8 @@ int main(int argc, const char * argv[]) {
       return EXIT_FAILURE;
     }
   }
-  print_duration("All points read in %lld seconds || %02d:%02d:%02d\n", startPoints);
+  print_duration("All points read in %lld seconds || %02d:%02d:%02d\n", startPoints, "points_read");
+  map3d.print_point_flow_counters();
 
   std::clog << "3dfying all input polygons...\n";
   bool threedfy = true;
@@ -645,14 +646,14 @@ int main(int argc, const char * argv[]) {
   if (threedfy) {
     auto startThreeDfy = boost::chrono::high_resolution_clock::now();
     map3d.threeDfy(bStitching);
-    print_duration("Lifting, stitching and vertical walls done in %lld seconds || %02d:%02d:%02d\n", startThreeDfy);
+    print_duration("Lifting, stitching and vertical walls done in %lld seconds || %02d:%02d:%02d\n", startThreeDfy, "lifting_stitching_walls");
   }
   if (cdt) {
     auto startCDT = boost::chrono::high_resolution_clock::now();
     if (!map3d.construct_CDT()) {
       return EXIT_FAILURE;
     }
-    print_duration("CDT created in %lld seconds || %02d:%02d:%02d\n", startCDT);
+    print_duration("CDT created in %lld seconds || %02d:%02d:%02d\n", startCDT, "cdt");
   }
   std::clog << "...3dfying done.\n";
   map3d.cleanup_elevations();
@@ -747,7 +748,7 @@ int main(int argc, const char * argv[]) {
     of.close();
 
     if (fileWritten) {
-      print_duration("Features written in %d seconds || %02d:%02d:%02d\n", startFileWriting);
+      print_duration("Features written in %d seconds || %02d:%02d:%02d\n", startFileWriting, "output_write");
     }
     else {
       std::cerr << "ERROR: Writing features failed for " << format << ". Aborting.\n";
@@ -756,7 +757,7 @@ int main(int argc, const char * argv[]) {
   }
 
   //-- bye-bye
-  print_duration("Successfully terminated in %d seconds || %02d:%02d:%02d\n", startTime);
+  print_duration("Successfully terminated in %d seconds || %02d:%02d:%02d\n", startTime, "total");
   return EXIT_SUCCESS;
 }
 
@@ -791,13 +792,17 @@ std::string print_license() {
   return thelicense;
 }
 
-void print_duration(std::string message, boost::chrono::time_point<boost::chrono::steady_clock> startTime) {
+void print_duration(std::string message, boost::chrono::time_point<boost::chrono::steady_clock> startTime, const char* label) {
   auto duration = boost::chrono::high_resolution_clock::now() - startTime;
   printf(message.c_str(),
     boost::chrono::duration_cast<boost::chrono::seconds>(duration).count(),
     boost::chrono::duration_cast<boost::chrono::hours>(duration).count(),
     boost::chrono::duration_cast<boost::chrono::minutes>(duration).count() % 60,
     (int)boost::chrono::duration_cast<boost::chrono::seconds>(duration).count() % 60
+  );
+  //-- millisecond-precision companion line for each timed phase (parsed by the runner)
+  printf("\t[timing_ms] %s %lld\n", label,
+    (long long)boost::chrono::duration_cast<boost::chrono::milliseconds>(duration).count()
   );
 }
 
